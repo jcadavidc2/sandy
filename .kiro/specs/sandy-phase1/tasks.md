@@ -54,7 +54,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 1.1, 1.2, 1.5, 1.6, 10.2_
   - [x] 6.2 Implement the ingest-failure path: after 5 exhausted retries or a non-retryable error, insert into `raw.ingest_failures` with `game_pk`, `endpoint`, `error_reason`, `http_status`, `retries` and continue processing remaining games
     - _Requirements: 1.4_
-  - [ ] 6.3 Implement `incremental_ingest()`: compute `max_final_date` from `raw.games`, fetch the schedule from that date through today, skip games already `Final`, replace non-final→Final games with the same transaction as backfill, and emit the summary line with `games_added`, `games_updated`, `games_skipped`
+  - [x] 6.3 Implement `incremental_ingest()`: compute `max_final_date` from `raw.games`, fetch the schedule from that date through today, skip games already `Final`, replace non-final→Final games with the same transaction as backfill, and emit the summary line with `games_added`, `games_updated`, `games_skipped`
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
   - [ ] 6.4 Write property-based test for idempotent ingestion
     - **Property 1: Idempotent ingestion** — running the Ingestion_Service twice over the same fixed set of mocked MLB Stats API responses produces byte-equivalent rows across all `raw.*` tables.
