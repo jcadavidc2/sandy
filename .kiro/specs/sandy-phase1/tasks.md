@@ -56,7 +56,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 1.4_
   - [x] 6.3 Implement `incremental_ingest()`: compute `max_final_date` from `raw.games`, fetch the schedule from that date through today, skip games already `Final`, replace non-final→Final games with the same transaction as backfill, and emit the summary line with `games_added`, `games_updated`, `games_skipped`
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
-  - [ ] 6.4 Write property-based test for idempotent ingestion
+  - [x] 6.4 Write property-based test for idempotent ingestion
     - **Property 1: Idempotent ingestion** — running the Ingestion_Service twice over the same fixed set of mocked MLB Stats API responses produces byte-equivalent rows across all `raw.*` tables.
     - Use Hypothesis to generate arbitrary ordered sequences of mocked `game_pk` responses and assert that the second run's `SELECT * ORDER BY PK` output is identical to the first's.
     - **Validates: Requirements 1.2, 2.4, 11.2**
