@@ -68,10 +68,6 @@ def _require_config(ctx: click.Context) -> Config:
         sys.exit(4)
 
 
-if __name__ == "__main__":  # pragma: no cover
-    cli()
-
-
 # ---------------------------------------------------------------------------
 # Register subcommands (imported here to avoid circular imports)
 # ---------------------------------------------------------------------------
@@ -87,3 +83,7 @@ cli.add_command(labels)
 cli.add_command(features)
 cli.add_command(train)
 cli.add_command(predict_cmd, name="predict")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    cli()
