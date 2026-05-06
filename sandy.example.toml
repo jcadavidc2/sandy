@@ -1,0 +1,20 @@
+[database]
+host = "localhost"
+port = 5432
+name = "sandy"
+user = "sandy"
+# password deliberately not in TOML; set MLB_DB_PASSWORD
+
+[model]
+path = "./models/latest.pkl"
+
+[ingest]
+max_rps = 10.0
+max_retries = 5
+retry_base_delay_seconds = 1.0
+
+[training]
+seed = 42
+
+[logging]
+level = "INFO"
