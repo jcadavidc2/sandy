@@ -45,8 +45,7 @@ def backfill(ctx: click.Context, seasons: int, start_season: int | None) -> None
         last_complete = current_year - 1
         season_list = list(range(last_complete - seasons + 1, last_complete + 1))
 
-    with get_connection(engine) as conn:
-        stats = backfill_seasons(conn, client, seasons=season_list)
+    stats = backfill_seasons(engine, client, seasons=season_list)
 
     click.echo(
         f"Backfill complete: {stats.games_processed} processed, "
@@ -65,8 +64,7 @@ def incremental(ctx: click.Context) -> None:
     engine = create_engine(cfg)
     client = MlbStatsClient(cfg.ingest)
 
-    with get_connection(engine) as conn:
-        stats = incremental_ingest(conn, client)
+    stats = incremental_ingest(engine, client)
 
     click.echo(
         f"Incremental complete: {stats.games_added} added, "

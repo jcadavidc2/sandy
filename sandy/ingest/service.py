@@ -67,11 +67,16 @@ class IncrementalStats:
 
 
 def backfill_seasons(
-    conn: Connection,
+    engine_or_conn,
     client: MlbStatsClient,
     seasons: list[int] | None = None,
 ) -> BackfillStats:
     """Fetch every regular-season game for the given seasons and persist them.
+
+    Accepts either a SQLAlchemy Engine (preferred — commits per game) or a
+    Connection (for testing — single transaction). When given an Engine, each
+    game is committed independently so progress is visible immediately and
+    a crash doesn't lose all prior work.
 
     If *seasons* is None, derives the three most recent complete seasons from
     the current year (requirement 1.1).
@@ -81,22 +86,32 @@ def backfill_seasons(
     1.5). Failures are recorded to raw.ingest_failures and processing
     continues (requirement 1.4).
     """
+    from sqlalchemy.engine import Engine
+    use_engine = isinstance(engine_or_conn, Engine)
+
     if seasons is None:
         current_year = date.today().year
-        # Most recent complete season ends the previous year
         last_complete = current_year - 1
         seasons = list(range(last_complete - _BACKFILL_SEASON_COUNT + 1, last_complete + 1))
 
     stats = BackfillStats(seasons=seasons)
     t0 = time.monotonic()
 
+    # Helper to get a connection (either from engine or use the passed conn)
+    def _with_conn(fn):
+        if use_engine:
+            with engine_or_conn.begin() as c:
+                return fn(c)
+        else:
+            return fn(engine_or_conn)
+
     # Ensure teams are loaded first (needed for FK constraints)
-    _upsert_teams(conn, client)
+    _with_conn(lambda c: _upsert_teams(c, client))
 
     # Collect all game_pks across all seasons
     all_entries: list[ScheduleEntry] = []
     for season in seasons:
-        entries = _fetch_season_schedule(conn, client, season)
+        entries = _with_conn(lambda c, s=season: _fetch_season_schedule(c, client, s))
         all_entries.extend(entries)
         logger.info(
             "Schedule fetched",
@@ -108,7 +123,7 @@ def backfill_seasons(
         )
 
     # Filter to only regular-season games not already Final in DB
-    final_pks = _get_final_game_pks(conn)
+    final_pks = _with_conn(lambda c: _get_final_game_pks(c))
     pending = [e for e in all_entries if e.game_type == "R" and e.game_pk not in final_pks]
     total = len(pending)
     skipped = len(all_entries) - total
@@ -125,7 +140,9 @@ def backfill_seasons(
     )
 
     for i, entry in enumerate(pending, start=1):
-        success = _ingest_one_game(conn, client, entry.game_pk)
+        # Each game gets its own transaction — commits immediately so
+        # progress is visible and a crash doesn't lose prior work.
+        success = _with_conn(lambda c, pk=entry.game_pk: _ingest_one_game(c, client, pk))
         if success:
             stats.games_processed += 1
         else:
@@ -161,10 +178,13 @@ def backfill_seasons(
 
 
 def incremental_ingest(
-    conn: Connection,
+    engine_or_conn,
     client: MlbStatsClient,
 ) -> IncrementalStats:
     """Fetch games newer than the most recent Final game in the DB.
+
+    Accepts either a SQLAlchemy Engine (preferred — commits per game) or a
+    Connection (for testing).
 
     - Skips games already Final (requirement 2.2)
     - Replaces non-Final → Final games (requirement 2.3)
@@ -173,10 +193,20 @@ def incremental_ingest(
 
     Requirements: 2.1–2.5
     """
+    from sqlalchemy.engine import Engine
+    use_engine = isinstance(engine_or_conn, Engine)
+
+    def _with_conn(fn):
+        if use_engine:
+            with engine_or_conn.begin() as c:
+                return fn(c)
+        else:
+            return fn(engine_or_conn)
+
     stats = IncrementalStats()
     t0 = time.monotonic()
 
-    max_final_date = _get_max_final_date(conn)
+    max_final_date = _with_conn(lambda c: _get_max_final_date(c))
     if max_final_date is None:
         logger.info(
             "No Final games in DB; run backfill first",
@@ -190,15 +220,15 @@ def incremental_ingest(
     entries = _fetch_schedule_window(client, max_final_date, today)
     regular = [e for e in entries if e.game_type == "R"]
 
-    final_pks = _get_final_game_pks(conn)
-    all_pks_in_db = _get_all_game_pks(conn)
+    final_pks = _with_conn(lambda c: _get_final_game_pks(c))
+    all_pks_in_db = _with_conn(lambda c: _get_all_game_pks(c))
 
     for entry in regular:
         if entry.game_pk in final_pks:
             stats.games_skipped += 1
             continue
 
-        success = _ingest_one_game(conn, client, entry.game_pk)
+        success = _with_conn(lambda c, pk=entry.game_pk: _ingest_one_game(c, client, pk))
         if success:
             if entry.game_pk in all_pks_in_db:
                 stats.games_updated += 1
