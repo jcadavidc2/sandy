@@ -17,6 +17,43 @@ from sandy.logging import get_logger
 logger = get_logger("mcp.tools")
 
 # ---------------------------------------------------------------------------
+# Human-readable feature descriptions
+# ---------------------------------------------------------------------------
+
+FEATURE_DESCRIPTIONS: dict[str, str] = {
+    # Inning-level features
+    "opp_starter_era": "Opposing starter's season ERA",
+    "opp_starter_whip": "Opposing starter's season WHIP",
+    "opp_starter_k9": "Opposing starter's season K/9",
+    "opp_starter_pitches_before": "Pitches thrown by starter before this inning",
+    "lineup_spot_1": "Batting order spot of 1st batter due up (1-9)",
+    "lineup_spot_2": "Batting order spot of 2nd batter due up (1-9)",
+    "lineup_spot_3": "Batting order spot of 3rd batter due up (1-9)",
+    "lineup_spot1_season_obp": "Season OBP of batter due up 1st",
+    "lineup_spot2_season_obp": "Season OBP of batter due up 2nd",
+    "lineup_spot3_season_obp": "Season OBP of batter due up 3rd",
+    "is_home": "1 if batting team is home, 0 if away",
+    "ballpark_id": "Venue ID (ballpark factor proxy)",
+    "inning_number_feat": "Inning number (1-9)",
+    "trailing15_rpg": "Team runs/game over trailing 15 games",
+    "trailing15_obp": "Team OBP over trailing 15 games",
+    "prev_inning_reached_base": "1 if team reached base in previous inning",
+    "innings_reached_so_far": "Count of prior innings with a baserunner",
+    "consecutive_reach_streak": "Current consecutive inning streak with baserunner",
+    "team_season_obp": "Team season OBP before game date",
+    "team_season_rpg": "Team season runs/game before game date",
+    # Game-level features
+    "home_starter_era": "Home starting pitcher's season ERA",
+    "home_starter_whip": "Home starting pitcher's season WHIP",
+    "away_starter_era": "Away starting pitcher's season ERA",
+    "away_starter_whip": "Away starting pitcher's season WHIP",
+    "home_trailing15_rpg": "Home team runs/game over trailing 15 games",
+    "away_trailing15_rpg": "Away team runs/game over trailing 15 games",
+    "home_season_obp": "Home team season OBP",
+    "away_season_obp": "Away team season OBP",
+}
+
+# ---------------------------------------------------------------------------
 # Tool definitions (JSON Schema for MCP protocol)
 # ---------------------------------------------------------------------------
 
@@ -112,6 +149,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["team_code"],
         },
     },
+    {
+        "name": "query_team_stats",
+        "description": "Get comprehensive team statistics: season record, batting stats (OBP, runs/game, hits/game), pitching stats (ERA, WHIP, K/9), last 5 game results, and trailing 15-game averages vs season averages. Use for EDA and descriptive stats questions.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "team_code": {"type": "string", "description": "3-letter team code (e.g. SEA, LAD, NYY)"},
+            },
+            "required": ["team_code"],
+        },
+    },
 ]
 
 
@@ -139,6 +187,8 @@ def handle_tool_call(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any
             return _handle_calibration_report(arguments)
         elif tool_name == "get_team_recent_games":
             return _handle_team_recent_games(arguments)
+        elif tool_name == "query_team_stats":
+            return _handle_query_team_stats(arguments)
         else:
             return {"error": f"Unknown tool: {tool_name}"}
     except Exception as exc:
@@ -269,6 +319,33 @@ def _handle_predict_reached_base(args: dict[str, Any]) -> dict[str, Any]:
     except (InvalidInputError, MissingArtifactError) as exc:
         return {"error": str(exc)}
 
+    # Build feature vector separately to get feature values for response
+    feature_values: dict[str, float] = {}
+    try:
+        from sandy.features.builder import build_feature_vector
+        from sandy.db import create_engine as _create_engine, get_connection as _get_conn
+        from sandy.predict.predictor import _resolve_team_code, _resolve_starter
+        from sqlalchemy import text as _text
+
+        _engine = _create_engine(config)
+        with _get_conn(_engine) as _conn:
+            _team = _resolve_team_code(_conn, team_code)
+            _opp = _resolve_team_code(_conn, opponent_code)
+            _starter_id = _resolve_starter(_conn, starter)
+            _features = build_feature_vector(
+                conn=_conn,
+                team_code=_team,
+                opp_team_code=_opp,
+                inning_number=inning,
+                opp_starter_id=_starter_id,
+                game_date=date.today(),
+                game_pk=None,
+                as_of=None,
+            )
+            feature_values = {k: float(v) for k, v in _features.values.items()}
+    except Exception:
+        pass  # Feature values are best-effort enrichment
+
     # Confidence assessment
     assessor = ConfidenceAssessor()
     confidence = assessor.assess(result.probability, "reached_base", result.top_features)
@@ -284,6 +361,15 @@ def _handle_predict_reached_base(args: dict[str, Any]) -> dict[str, Any]:
             "confidence_explanation": confidence.explanation,
             "top_features": [
                 {"name": f.name, "contribution": round(f.contribution, 4)}
+                for f in result.top_features
+            ],
+            "feature_details": [
+                {
+                    "name": f.name,
+                    "value": round(feature_values.get(f.name, 0.0), 4),
+                    "contribution": round(f.contribution, 4),
+                    "meaning": FEATURE_DESCRIPTIONS.get(f.name, f.name),
+                }
                 for f in result.top_features
             ],
         },
@@ -319,6 +405,26 @@ def _handle_predict_game_winner(args: dict[str, Any]) -> dict[str, Any]:
     if opponent_code is None:
         return {"error": "Could not determine opponent. Provide opponent_code or ensure a game is in progress."}
 
+    # Determine home/away from schedule
+    home_code = team_code.upper()
+    away_code = opponent_code.upper()
+    try:
+        from sandy.schedule.client import get_todays_schedule
+        schedule = get_todays_schedule(config)
+        for game in schedule:
+            h = game.home_team_code.strip().upper()
+            a = game.away_team_code.strip().upper()
+            if h == team_code.strip().upper() and a == opponent_code.strip().upper():
+                home_code = team_code.upper()
+                away_code = opponent_code.upper()
+                break
+            elif h == opponent_code.strip().upper() and a == team_code.strip().upper():
+                home_code = opponent_code.upper()
+                away_code = team_code.upper()
+                break
+    except Exception:
+        pass
+
     try:
         result = predict_game(
             team=team_code,
@@ -329,19 +435,80 @@ def _handle_predict_game_winner(args: dict[str, Any]) -> dict[str, Any]:
     except (InvalidInputError, MissingArtifactError) as exc:
         return {"error": str(exc)}
 
+    # Build game feature vector to get feature values
+    feature_values: dict[str, float] = {}
+    try:
+        from sandy.features.game_builder import build_game_feature_vector
+        from sandy.db import create_engine as _create_engine, get_connection as _get_conn
+        from sandy.predict.predictor import _resolve_team_code, _resolve_starter, _get_team_venue
+        from sandy.schedule.client import get_todays_schedule, resolve_starter_for_matchup
+
+        _engine = _create_engine(config)
+        with _get_conn(_engine) as _conn:
+            _team = _resolve_team_code(_conn, team_code)
+            _opp = _resolve_team_code(_conn, opponent_code)
+
+            # Determine home/away and starters
+            _schedule = get_todays_schedule(config)
+            _home_starter_name, _away_starter_name = resolve_starter_for_matchup(
+                _schedule, _team, _opp
+            )
+            _is_home = True
+            for g in _schedule:
+                h = g.home_team_code.strip().upper()
+                a = g.away_team_code.strip().upper()
+                if h == _opp.strip().upper() and a == _team.strip().upper():
+                    _is_home = False
+                    break
+
+            _home_starter_id = _resolve_starter(
+                _conn, _home_starter_name if _is_home else _away_starter_name
+            ) if (_home_starter_name if _is_home else _away_starter_name) else None
+            _away_starter_id = _resolve_starter(
+                _conn, _away_starter_name if _is_home else _home_starter_name
+            ) if (_away_starter_name if _is_home else _home_starter_name) else None
+
+            _venue_id = _get_team_venue(_conn, home_code)
+
+            _features = build_game_feature_vector(
+                conn=_conn,
+                game_pk=None,
+                team_code=_team,
+                opp_team_code=_opp,
+                home_starter_id=_home_starter_id,
+                away_starter_id=_away_starter_id,
+                game_date=date.today(),
+                venue_id=_venue_id,
+                is_home=_is_home,
+            )
+            feature_values = {k: float(v) for k, v in _features.values.items()}
+    except Exception:
+        pass  # Feature values are best-effort enrichment
+
     assessor = ConfidenceAssessor()
     confidence = assessor.assess(result.probability, "game_winner", result.top_features)
 
     return {
         "prediction": {
             "target": "game_winner",
-            "team": team_code.upper(),
-            "opponent": opponent_code.upper(),
-            "win_probability": round(result.probability, 4),
+            "home_team": home_code,
+            "away_team": away_code,
+            "home_win_probability": round(result.probability, 4),
+            "away_win_probability": round(1 - result.probability, 4),
+            "predicted_for": team_code.upper(),
             "confidence": confidence.level,
             "confidence_explanation": confidence.explanation,
             "top_features": [
                 {"name": f.name, "contribution": round(f.contribution, 4)}
+                for f in result.top_features
+            ],
+            "feature_details": [
+                {
+                    "name": f.name,
+                    "value": round(feature_values.get(f.name, 0.0), 4),
+                    "contribution": round(f.contribution, 4),
+                    "meaning": FEATURE_DESCRIPTIONS.get(f.name, f.name),
+                }
                 for f in result.top_features
             ],
         },
@@ -583,6 +750,221 @@ def _handle_team_recent_games(args: dict[str, Any]) -> dict[str, Any]:
             "record": f"{wins}-{losses}",
             "runs_scored_avg": round(total_runs_for / len(games), 1),
             "runs_allowed_avg": round(total_runs_against / len(games), 1),
+        },
+    }
+
+
+def _handle_query_team_stats(args: dict[str, Any]) -> dict[str, Any]:
+    """Return comprehensive team statistics for EDA questions."""
+    from sqlalchemy import text
+    from sandy.config import load_config
+    from sandy.db import create_engine
+
+    team_code = args.get("team_code", "").upper().strip()
+    config = load_config()
+    engine = create_engine(config)
+    season = date.today().year
+
+    with engine.connect() as conn:
+        # Validate team code
+        team_row = conn.execute(
+            text("SELECT team_code, name FROM raw.teams WHERE UPPER(team_code) = UPPER(:code)"),
+            {"code": team_code},
+        ).fetchone()
+        if team_row is None:
+            return {"error": f"Unknown team code: '{team_code}'."}
+
+        team_name = team_row[1].strip()
+
+        # --- Season record (W-L) ---
+        record_row = conn.execute(
+            text("""
+                SELECT
+                    SUM(CASE
+                        WHEN (home_team_code = :team AND home_score > away_score)
+                          OR (away_team_code = :team AND away_score > home_score)
+                        THEN 1 ELSE 0 END) AS wins,
+                    SUM(CASE
+                        WHEN (home_team_code = :team AND home_score < away_score)
+                          OR (away_team_code = :team AND away_score < home_score)
+                        THEN 1 ELSE 0 END) AS losses,
+                    COUNT(*) AS games_played
+                FROM raw.games
+                WHERE (home_team_code = :team OR away_team_code = :team)
+                  AND status = 'Final'
+                  AND EXTRACT(YEAR FROM game_date) = :season
+            """),
+            {"team": team_code, "season": season},
+        ).fetchone()
+
+        wins = int(record_row[0] or 0)
+        losses = int(record_row[1] or 0)
+        games_played = int(record_row[2] or 0)
+
+        # --- Team batting stats (season) ---
+        batting_row = conn.execute(
+            text("""
+                SELECT
+                    COUNT(*) AS pa,
+                    SUM(CASE WHEN event_code IN ('single','double','triple','home_run',
+                                                 'walk','hit_by_pitch') THEN 1 ELSE 0 END) AS on_base,
+                    SUM(CASE WHEN event_code IN ('single','double','triple','home_run')
+                        THEN 1 ELSE 0 END) AS hits
+                FROM raw.plays p
+                JOIN raw.games g ON g.game_pk = p.game_pk
+                WHERE p.batting_team_code = :team
+                  AND g.status = 'Final'
+                  AND EXTRACT(YEAR FROM g.game_date) = :season
+            """),
+            {"team": team_code, "season": season},
+        ).fetchone()
+
+        pa = int(batting_row[0] or 0)
+        on_base = int(batting_row[1] or 0)
+        hits = int(batting_row[2] or 0)
+        season_obp = round(on_base / pa, 3) if pa > 0 else 0.0
+        hits_per_game = round(hits / games_played, 1) if games_played > 0 else 0.0
+
+        # Runs per game
+        runs_row = conn.execute(
+            text("""
+                SELECT SUM(CASE WHEN home_team_code = :team THEN home_score
+                                ELSE away_score END) AS total_runs
+                FROM raw.games
+                WHERE (home_team_code = :team OR away_team_code = :team)
+                  AND status = 'Final'
+                  AND EXTRACT(YEAR FROM game_date) = :season
+            """),
+            {"team": team_code, "season": season},
+        ).fetchone()
+        total_runs = int(runs_row[0] or 0)
+        runs_per_game = round(total_runs / games_played, 2) if games_played > 0 else 0.0
+
+        # --- Team pitching stats (season) ---
+        pitching_row = conn.execute(
+            text("""
+                SELECT
+                    SUM(pgs.outs_recorded) AS total_outs,
+                    SUM(pgs.runs_allowed) AS total_runs_allowed,
+                    SUM(pgs.walks) AS total_walks,
+                    SUM(pgs.hits_allowed) AS total_hits_allowed,
+                    SUM(pgs.strikeouts) AS total_ks
+                FROM raw.pitcher_game_stats pgs
+                JOIN raw.games g ON g.game_pk = pgs.game_pk
+                WHERE pgs.team_code = :team
+                  AND g.status = 'Final'
+                  AND EXTRACT(YEAR FROM g.game_date) = :season
+            """),
+            {"team": team_code, "season": season},
+        ).fetchone()
+
+        total_outs = int(pitching_row[0] or 0)
+        innings_pitched = total_outs / 3.0 if total_outs > 0 else 0.0
+        team_era = round(9.0 * int(pitching_row[1] or 0) / innings_pitched, 2) if innings_pitched > 0 else 0.0
+        team_whip = round((int(pitching_row[2] or 0) + int(pitching_row[3] or 0)) / innings_pitched, 2) if innings_pitched > 0 else 0.0
+        team_k9 = round(9.0 * int(pitching_row[4] or 0) / innings_pitched, 1) if innings_pitched > 0 else 0.0
+
+        # --- Last 5 games ---
+        last5_rows = conn.execute(
+            text("""
+                SELECT game_date, home_team_code, away_team_code,
+                       home_score, away_score
+                FROM raw.games
+                WHERE (home_team_code = :team OR away_team_code = :team)
+                  AND status = 'Final'
+                ORDER BY game_date DESC, game_pk DESC
+                LIMIT 5
+            """),
+            {"team": team_code},
+        ).fetchall()
+
+        last5_games = []
+        for row in last5_rows:
+            gd, home, away, hs, as_ = row
+            home = home.strip()
+            away = away.strip()
+            is_home = (home == team_code)
+            opp = away if is_home else home
+            team_runs = hs if is_home else as_
+            opp_runs = as_ if is_home else hs
+            won = team_runs > opp_runs
+            last5_games.append({
+                "date": str(gd),
+                "opponent": opp,
+                "score": f"{team_runs}-{opp_runs}",
+                "result": "W" if won else "L",
+                "home_away": "home" if is_home else "away",
+            })
+
+        # --- Trailing 15 games vs season averages ---
+        trailing15_row = conn.execute(
+            text("""
+                SELECT
+                    SUM(CASE WHEN home_team_code = :team THEN home_score
+                             ELSE away_score END) AS runs_for,
+                    SUM(CASE WHEN home_team_code = :team THEN away_score
+                             ELSE home_score END) AS runs_against,
+                    COUNT(*) AS games
+                FROM (
+                    SELECT home_team_code, away_team_code, home_score, away_score
+                    FROM raw.games
+                    WHERE (home_team_code = :team OR away_team_code = :team)
+                      AND status = 'Final'
+                    ORDER BY game_date DESC, game_pk DESC
+                    LIMIT 15
+                ) recent
+            """),
+            {"team": team_code},
+        ).fetchone()
+
+        t15_games = int(trailing15_row[2] or 0)
+        t15_rpg = round(int(trailing15_row[0] or 0) / t15_games, 2) if t15_games > 0 else 0.0
+        t15_ra_pg = round(int(trailing15_row[1] or 0) / t15_games, 2) if t15_games > 0 else 0.0
+
+        # Trailing 15 OBP
+        t15_obp_row = conn.execute(
+            text("""
+                SELECT
+                    SUM(CASE WHEN event_code IN ('single','double','triple','home_run',
+                                                 'walk','hit_by_pitch') THEN 1 ELSE 0 END) AS on_base,
+                    COUNT(*) AS pa
+                FROM raw.plays p
+                WHERE p.batting_team_code = :team
+                  AND p.game_pk IN (
+                      SELECT game_pk FROM raw.games
+                      WHERE (home_team_code = :team OR away_team_code = :team)
+                        AND status = 'Final'
+                      ORDER BY game_date DESC, game_pk DESC
+                      LIMIT 15
+                  )
+            """),
+            {"team": team_code},
+        ).fetchone()
+        t15_pa = int(t15_obp_row[1] or 0)
+        t15_obp = round(int(t15_obp_row[0] or 0) / t15_pa, 3) if t15_pa > 0 else 0.0
+
+    return {
+        "team": team_code,
+        "team_name": team_name,
+        "season": season,
+        "record": {"wins": wins, "losses": losses, "games_played": games_played},
+        "batting": {
+            "obp": season_obp,
+            "runs_per_game": runs_per_game,
+            "hits_per_game": hits_per_game,
+        },
+        "pitching": {
+            "era": team_era,
+            "whip": team_whip,
+            "k_per_9": team_k9,
+        },
+        "last_5_games": last5_games,
+        "trailing_15_vs_season": {
+            "trailing_15_rpg": t15_rpg,
+            "season_rpg": runs_per_game,
+            "trailing_15_runs_allowed_pg": t15_ra_pg,
+            "trailing_15_obp": t15_obp,
+            "season_obp": season_obp,
         },
     }
 
