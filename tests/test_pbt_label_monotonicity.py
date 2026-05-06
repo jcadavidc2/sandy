@@ -105,6 +105,7 @@ def _insert_play(conn, game_pk: int, at_bat_index: int, inning: int,
 # ---------------------------------------------------------------------------
 
 @given(
+    game_pk=st.integers(min_value=990000, max_value=999999),
     target_inning=st.integers(min_value=1, max_value=9),
     reach_code=st.sampled_from(REACH_CODES),
     noise_codes=st.lists(
@@ -118,11 +119,10 @@ def _insert_play(conn, game_pk: int, at_bat_index: int, inning: int,
     deadline=None,
 )
 def test_label_monotonicity(
-    target_inning, reach_code, noise_codes, noise_before, clean_db
+    game_pk, target_inning, reach_code, noise_codes, noise_before, clean_db
 ):
     """If at least one reach-base event exists in an inning, reached_base must be True."""
     engine = clean_db
-    game_pk = 999001
     home, away = "SEA", "LAD"
     batting_team = away  # top of inning = away team bats
 
