@@ -115,9 +115,9 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 1.1, 2.1, 10.2_
   - [x] 12.3 Implement `sandy labels build [--game-pk INT]` delegating to `labels.runner`
     - _Requirements: 4.1, 10.2_
-  - [ ] 12.4 Implement `sandy features build [--game-pk INT]` delegating to `features.runner`
+  - [x] 12.4 Implement `sandy features build [--game-pk INT]` delegating to `features.runner`
     - _Requirements: 5.1, 10.2_
-  - [ ] 12.5 Implement `sandy train [--seed INT] [--output PATH]` delegating to `train.trainer` and `train.artifact`, translating `TrainingQualityError` to exit code 1 with a warning message naming the observed AUC
+  - [x] 12.5 Implement `sandy train [--seed INT] [--output PATH]` delegating to `train.trainer` and `train.artifact`, translating `TrainingQualityError` to exit code 1 with a warning message naming the observed AUC
     - _Requirements: 6.4, 6.5, 6.6, 10.2_
   - [ ] 12.6 Implement `sandy predict --team --opp --inning --starter [--as-of]` printing `PredictionResult.to_json()` to stdout and translating errors to exit codes 2 (invalid input), 3 (missing artifact), 4 (missing env var)
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 9.2_
