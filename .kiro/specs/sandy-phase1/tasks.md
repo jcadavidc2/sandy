@@ -19,11 +19,11 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 12.1_
 
 - [ ] 2. Implement configuration and structured logging
-  - [ ] 2.1 Implement the `Config` dataclass hierarchy (`DatabaseConfig`, `ModelConfig`, `IngestConfig`, `TrainingConfig`, `LoggingConfig`) and `load_config()` with precedence defaults < TOML < env < CLI flags, including fallback of `MLB_MODEL_PATH` to `./models/latest.pkl`
+  - [x] 2.1 Implement the `Config` dataclass hierarchy (`DatabaseConfig`, `ModelConfig`, `IngestConfig`, `TrainingConfig`, `LoggingConfig`) and `load_config()` with precedence defaults < TOML < env < CLI flags, including fallback of `MLB_MODEL_PATH` to `./models/latest.pkl`
     - _Requirements: 9.1, 9.3, 9.4_
-  - [ ] 2.2 Implement JSON-formatter logging (`sandy/logging.py`) emitting `timestamp`, `level`, `component`, `message` with extras, honoring `MLB_LOG_LEVEL` and `--log-level`
+  - [x] 2.2 Implement JSON-formatter logging (`sandy/logging.py`) emitting `timestamp`, `level`, `component`, `message` with extras, honoring `MLB_LOG_LEVEL` and `--log-level`
     - _Requirements: 10.1, 10.3_
-  - [ ] 2.3 Implement the "missing required env var" guard that exits with status 4 and names the missing variable
+  - [x] 2.3 Implement the "missing required env var" guard that exits with status 4 and names the missing variable
     - _Requirements: 9.2_
   - [ ]* 2.4 Write unit tests for config precedence and the missing-env-var exit path
     - _Requirements: 9.1, 9.2, 9.4_

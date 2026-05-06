@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Sync to EC2",
+  "description": "After each spec task completes, commits any staged changes, pushes to GitHub, then pulls on the EC2 so it's always current.",
+  "version": "1",
+  "when": {
+    "type": "postTaskExecution"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "cd \"C:\\Users\\Julian Cadavid\\Desktop\\sandy_beta\" && git add -A && git diff --cached --quiet || git commit -m \"auto: sync after task\" && git push --set-upstream origin main && ssh sandy-ec2 \"cd ~/sandy && git pull\""
+  }
+}
