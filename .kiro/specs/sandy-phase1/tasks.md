@@ -38,7 +38,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
   - [x] 3.4 Define `TypedDict` / frozen-dataclass row types in `sandy/schemas.py` for every raw and derived table, plus `FeatureVector`, `ModelArtifact`, `TopFeature`, `PredictionResult`
     - _Requirements: 3.1, 3.2, 7.1_
 
-- [ ] 4. Checkpoint — DB and config bootstrap
+- [x] 4. Checkpoint — DB and config bootstrap
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 5. Implement MLB Stats API client and parsers
