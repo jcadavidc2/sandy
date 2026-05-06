@@ -24,4 +24,7 @@ models/
 
 # Local config
 .env
+
+# SSH keys
+*.pem
 sandy.toml
