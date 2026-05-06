@@ -104,7 +104,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 10. Multi-target training
-  - [ ] 10.1 Extend `sandy/train/trainer.py` with `train_game_winner_model()` function
+  - [x] 10.1 Extend `sandy/train/trainer.py` with `train_game_winner_model()` function
     - Load game_winner_labels ⨝ game_features join from Postgres
     - Fit LightGBM with `objective: binary`, chronological split, deterministic training
     - Log validation ROC AUC, log loss, Brier score as structured JSON
