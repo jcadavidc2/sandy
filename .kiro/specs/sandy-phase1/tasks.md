@@ -50,7 +50,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 1.1_
 
 - [ ] 6. Implement the ingestion service
-  - [ ] 6.1 Implement `backfill_seasons()` in `sandy/ingest/service.py`: enumerate regular-season `game_pk`s via `/v1/schedule` in one-month windows for the three most recent complete seasons, skip games already in `raw.games` with `status='Final'`, and UPSERT each game in a single transaction (`DELETE plays WHERE game_pk=?; UPSERT games/players/pitcher_game_stats; INSERT plays`) with a progress log line every 50 games containing `games_processed`, `games_remaining`, `elapsed_seconds`
+  - [x] 6.1 Implement `backfill_seasons()` in `sandy/ingest/service.py`: enumerate regular-season `game_pk`s via `/v1/schedule` in one-month windows for the three most recent complete seasons, skip games already in `raw.games` with `status='Final'`, and UPSERT each game in a single transaction (`DELETE plays WHERE game_pk=?; UPSERT games/players/pitcher_game_stats; INSERT plays`) with a progress log line every 50 games containing `games_processed`, `games_remaining`, `elapsed_seconds`
     - _Requirements: 1.1, 1.2, 1.5, 1.6, 10.2_
   - [ ] 6.2 Implement the ingest-failure path: after 5 exhausted retries or a non-retryable error, insert into `raw.ingest_failures` with `game_pk`, `endpoint`, `error_reason`, `http_status`, `retries` and continue processing remaining games
     - _Requirements: 1.4_
