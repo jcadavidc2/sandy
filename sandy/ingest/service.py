@@ -313,6 +313,20 @@ def _write_game_transaction(conn: Connection, parsed: ParsedGame) -> None:
     game_pk = parsed.game["game_pk"]
 
     with conn.begin_nested():  # savepoint
+        # Ensure home/away teams exist (FK prerequisite for games table).
+        # The /v1/teams endpoint may not return all historical teams, so we
+        # also insert teams discovered in each game feed.
+        for code in (parsed.game["home_team_code"], parsed.game["away_team_code"]):
+            code = code.strip()
+            conn.execute(
+                text("""
+                    INSERT INTO raw.teams (team_code, team_id, name)
+                    VALUES (:code, :tid, :name)
+                    ON CONFLICT (team_code) DO NOTHING
+                """),
+                {"code": code, "tid": abs(hash(code)) % 900000 + 100000, "name": code},
+            )
+
         # Players (FK for games and plays)
         for player in parsed.players:
             conn.execute(
@@ -384,7 +398,7 @@ def _write_game_transaction(conn: Connection, parsed: ParsedGame) -> None:
                         :batter_id, :pitcher_id, :batting_order,
                         :event_type, :event_code, :is_reaches_base,
                         :pitches_in_pa, :start_time_utc, :end_time_utc,
-                        :raw::jsonb
+                        CAST(:raw AS jsonb)
                     )
                     ON CONFLICT (game_pk, at_bat_index) DO NOTHING
                 """),
