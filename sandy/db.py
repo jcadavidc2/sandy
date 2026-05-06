@@ -219,15 +219,6 @@ CREATE TABLE IF NOT EXISTS derived.inning_features (
     team_season_obp            REAL,
     team_season_rpg            REAL,
 
-    -- Within-game momentum context (schema v2)
-    prev_inning_reached_base   SMALLINT    DEFAULT 0,
-    innings_reached_so_far     SMALLINT    DEFAULT 0,
-    consecutive_reach_streak   SMALLINT    DEFAULT 0,
-
-    -- Season-level team offensive baseline (schema v2)
-    team_season_obp            REAL,
-    team_season_rpg            REAL,
-
     built_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_pk, team_code, inning_number)
 );
