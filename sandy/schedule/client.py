@@ -102,16 +102,29 @@ def _parse_schedule_response(payload: dict[str, Any]) -> list[ScheduledGame]:
     """Parse the MLB schedule API response into ScheduledGame objects."""
     games: list[ScheduledGame] = []
 
+    # MLB team ID → abbreviation mapping (all 30 teams)
+    TEAM_ID_TO_CODE = {
+        108: "LAA", 109: "AZ", 110: "BAL", 111: "BOS", 112: "CHC",
+        113: "CIN", 114: "CLE", 115: "COL", 116: "DET", 117: "HOU",
+        118: "KC", 119: "LAD", 120: "WSH", 121: "NYM", 133: "OAK",
+        134: "PIT", 135: "SD", 136: "SEA", 137: "SF", 138: "STL",
+        139: "TB", 140: "TEX", 141: "TOR", 142: "MIN", 143: "PHI",
+        144: "ATL", 145: "CWS", 146: "MIA", 147: "NYY", 158: "MIL",
+    }
+
     for date_block in payload.get("dates", []):
         for game in date_block.get("games", []):
             try:
                 game_pk = int(game["gamePk"])
                 teams = game.get("teams", {})
-                home = teams.get("home", {}).get("team", {})
-                away = teams.get("away", {}).get("team", {})
+                home_team = teams.get("home", {}).get("team", {})
+                away_team = teams.get("away", {}).get("team", {})
 
-                home_code = home.get("abbreviation", "UNK").upper()[:3]
-                away_code = away.get("abbreviation", "UNK").upper()[:3]
+                # Resolve team codes from ID (schedule endpoint doesn't include abbreviation)
+                home_id = home_team.get("id", 0)
+                away_id = away_team.get("id", 0)
+                home_code = TEAM_ID_TO_CODE.get(home_id, home_team.get("abbreviation", "UNK")).upper()[:3]
+                away_code = TEAM_ID_TO_CODE.get(away_id, away_team.get("abbreviation", "UNK")).upper()[:3]
 
                 # Probable pitchers
                 home_pitcher = teams.get("home", {}).get("probablePitcher", {})
