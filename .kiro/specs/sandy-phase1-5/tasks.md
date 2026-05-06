@@ -9,7 +9,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
 ## Tasks
 
 - [ ] 1. DB schema changes — new derived tables
-  - [-] 1.1 Add DDL for `derived.game_winner_labels` table with columns: `game_pk` (PK, FK → raw.games), `home_team_wins` (BOOLEAN NOT NULL), `labeled_at` (TIMESTAMPTZ DEFAULT now())
+  - [x] 1.1 Add DDL for `derived.game_winner_labels` table with columns: `game_pk` (PK, FK → raw.games), `home_team_wins` (BOOLEAN NOT NULL), `labeled_at` (TIMESTAMPTZ DEFAULT now())
     - Add to the `bootstrap_schema()` DDL in `sandy/db.py`
     - Use `CREATE TABLE IF NOT EXISTS` for idempotent bootstrap
     - _Requirements: 12.1_
