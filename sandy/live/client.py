@@ -60,7 +60,7 @@ def get_live_game_state(
             params={
                 "sportId": "1",
                 "date": date.today().isoformat(),
-                "hydrate": "probablePitcher,linescore",
+                "hydrate": "probablePitcher,linescore,team",
             },
         )
     except (MlbApiError, MlbApiRetryExhausted) as exc:
