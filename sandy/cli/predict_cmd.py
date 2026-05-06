@@ -11,7 +11,7 @@ from datetime import date
 
 import click
 
-from sandy.cli.main import _require_config
+from sandy.cli._helpers import require_config
 from sandy.logging import configure_logging
 from sandy.predict.predictor import (
     InvalidInputError,
@@ -37,7 +37,7 @@ def predict_cmd(
     as_of: str | None,
 ) -> None:
     """Emit per-inning reach-base probability as JSON."""
-    cfg = _require_config(ctx)
+    cfg = require_config(ctx)
     configure_logging(cfg.logging.level)
 
     # Parse as_of date

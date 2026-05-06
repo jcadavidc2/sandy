@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import click
 
-from sandy.cli.main import _require_config
+from sandy.cli._helpers import require_config
 from sandy.db import create_engine
 from sandy.labels.runner import run_labels
 from sandy.logging import configure_logging
@@ -25,7 +25,7 @@ def labels():
 @click.pass_context
 def build(ctx: click.Context, game_pk: int | None) -> None:
     """Generate reached_base labels for all Final games."""
-    cfg = _require_config(ctx)
+    cfg = require_config(ctx)
     configure_logging(cfg.logging.level)
 
     engine = create_engine(cfg)

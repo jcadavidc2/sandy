@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import click
 
-from sandy.cli.main import _require_config
+from sandy.cli._helpers import require_config
 from sandy.db import bootstrap_schema, create_engine, get_connection
 from sandy.ingest.client import MlbStatsClient
 from sandy.ingest.service import backfill_seasons, incremental_ingest
@@ -27,7 +27,7 @@ def ingest():
 @click.pass_context
 def backfill(ctx: click.Context, seasons: int, start_season: int | None) -> None:
     """Backfill historical regular-season data from MLB Stats API."""
-    cfg = _require_config(ctx)
+    cfg = require_config(ctx)
     configure_logging(cfg.logging.level)
 
     engine = create_engine(cfg)
@@ -59,7 +59,7 @@ def backfill(ctx: click.Context, seasons: int, start_season: int | None) -> None
 @click.pass_context
 def incremental(ctx: click.Context) -> None:
     """Fetch new/updated games since last ingestion."""
-    cfg = _require_config(ctx)
+    cfg = require_config(ctx)
     configure_logging(cfg.logging.level)
 
     engine = create_engine(cfg)

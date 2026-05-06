@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import click
 
-from sandy.cli.main import _require_config
+from sandy.cli._helpers import require_config
 from sandy.db import create_engine
 from sandy.features.runner import run_features
 from sandy.logging import configure_logging
@@ -25,7 +25,7 @@ def features():
 @click.pass_context
 def build(ctx: click.Context, game_pk: int | None) -> None:
     """Build feature vectors for all labeled innings."""
-    cfg = _require_config(ctx)
+    cfg = require_config(ctx)
     configure_logging(cfg.logging.level)
 
     engine = create_engine(cfg)

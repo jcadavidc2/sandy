@@ -11,7 +11,7 @@ from pathlib import Path
 
 import click
 
-from sandy.cli.main import _require_config
+from sandy.cli._helpers import require_config
 from sandy.db import create_engine, get_connection
 from sandy.logging import configure_logging
 from sandy.train.artifact import save_artifact
@@ -24,7 +24,7 @@ from sandy.train.trainer import TrainingQualityError, train_model
 @click.pass_context
 def train(ctx: click.Context, seed: int, output: str | None) -> None:
     """Fit LightGBM model and write artifact."""
-    cfg = _require_config(ctx)
+    cfg = require_config(ctx)
     configure_logging(cfg.logging.level)
 
     engine = create_engine(cfg)
