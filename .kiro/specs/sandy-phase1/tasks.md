@@ -93,7 +93,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 6.1, 6.3, 6.4, 6.6_
   - [x] 10.3 Implement `save_artifact()` (atomic `.tmp` + `replace`) and `load_artifact()` in `sandy/train/artifact.py`, serializing via LightGBM `model_to_string()` inside a pickle dict with keys `model`, `feature_names`, `feature_schema_version`, `training_window_start`, `training_window_end`, `created_at`; raise `FeatureSchemaMismatch` on load if the stored version ≠ current
     - _Requirements: 6.5, 7.1, 7.3_
-  - [ ] 10.4 Write property-based test for model serializer round-trip
+  - [x] 10.4 Write property-based test for model serializer round-trip
     - **Property 3: Serializer round-trip** — saving a trained LightGBM model via `save_artifact()` and loading it via `load_artifact()` produces predictions matching the in-memory model within 1e-9 absolute tolerance on a fixed input.
     - Use Hypothesis to generate fixed input feature matrices, fit a deterministic LightGBM, save and reload, then assert `abs(reloaded.predict(x) - original.predict(x)) < 1e-9` element-wise.
     - **Validates: Requirements 7.2, 11.4**
