@@ -111,7 +111,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
 - [ ] 12. Wire up the `sandy` CLI with Click
   - [x] 12.1 Implement the top-level Click group in `sandy/cli/main.py` with `--config`, `--log-level`, and `--version`, wiring `load_config()` and `configure_logging()` into the group's context
     - _Requirements: 9.4, 10.3_
-  - [ ] 12.2 Implement `sandy ingest backfill [--seasons N] [--start-season YYYY]` and `sandy ingest incremental` subcommands delegating to `ingest.service`, emitting the final `duration_seconds` / `rows_read` / `rows_written` log line
+  - [x] 12.2 Implement `sandy ingest backfill [--seasons N] [--start-season YYYY]` and `sandy ingest incremental` subcommands delegating to `ingest.service`, emitting the final `duration_seconds` / `rows_read` / `rows_written` log line
     - _Requirements: 1.1, 2.1, 10.2_
   - [ ] 12.3 Implement `sandy labels build [--game-pk INT]` delegating to `labels.runner`
     - _Requirements: 4.1, 10.2_
