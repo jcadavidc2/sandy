@@ -220,13 +220,17 @@ def test_idempotent_ingestion(games, clean_db):
 
     with engine.begin() as conn:
         for i, code in enumerate(sorted(team_codes)):
+            # Use a hash-based team_id to ensure uniqueness across codes
+            tid = abs(hash(code)) % 90000 + 10000 + i
             conn.execute(
                 text("""
                     INSERT INTO raw.teams (team_code, team_id, name)
                     VALUES (:code, :tid, :name)
-                    ON CONFLICT (team_code) DO NOTHING
+                    ON CONFLICT (team_code) DO UPDATE SET
+                        team_id = EXCLUDED.team_id,
+                        name = EXCLUDED.name
                 """),
-                {"code": code[:3], "tid": 100 + i, "name": f"{code} Team"},
+                {"code": code[:3], "tid": tid, "name": f"{code} Team"},
             )
 
     # Build mock client that returns our synthetic payloads
