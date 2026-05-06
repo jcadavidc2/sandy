@@ -40,6 +40,16 @@ class DatabaseConfig:
 @dataclass(frozen=True)
 class ModelConfig:
     path: Path
+    model_dir: Path = Path("./models")
+
+    def artifact_path(self, target: str = "reached_base") -> Path:
+        """Resolve the artifact path for a given target name.
+
+        Returns model_dir / f"{target}.pkl".
+        For backward compat, if MLB_MODEL_PATH was set and target is
+        reached_base, self.path is used directly.
+        """
+        return self.model_dir / f"{target}.pkl"
 
 
 @dataclass(frozen=True)
@@ -213,6 +223,10 @@ def load_config(
     if model_env:
         working["model"]["path"] = model_env
 
+    model_dir_env = os.environ.get("MLB_MODEL_DIR")
+    if model_dir_env:
+        working["model"]["model_dir"] = model_dir_env
+
     log_env = os.environ.get("MLB_LOG_LEVEL")
     if log_env:
         working["logging"]["level"] = log_env
@@ -241,7 +255,10 @@ def load_config(
         user=str(db_working["user"]),
         password=str(db_working["password"]),
     )
-    model = ModelConfig(path=Path(working["model"]["path"]))
+    model = ModelConfig(
+        path=Path(working["model"]["path"]),
+        model_dir=Path(working["model"].get("model_dir", "./models")),
+    )
     ingest = IngestConfig(
         **{
             k: v

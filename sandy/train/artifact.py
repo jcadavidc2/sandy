@@ -13,7 +13,7 @@ crash mid-write never leaves a corrupt artifact (requirement 7.1).
 FeatureSchemaMismatch is raised on load if the stored feature_schema_version
 differs from the current code version (requirement 7.3).
 
-Requirements: 6.5, 7.1, 7.2, 7.3
+Requirements: 6.5, 7.1, 7.2, 7.3, 13.1, 13.3, 14.3
 """
 from __future__ import annotations
 
@@ -23,7 +23,10 @@ from pathlib import Path
 
 import lightgbm as lgb
 
-from sandy.features.schema import FEATURE_SCHEMA_VERSION
+from sandy.features.schema import (
+    FEATURE_SCHEMA_VERSION,
+    GAME_FEATURE_SCHEMA_VERSION,
+)
 from sandy.schemas import ModelArtifact
 
 
@@ -44,6 +47,19 @@ class FeatureSchemaMismatch(Exception):
         self.current = current
 
 
+class TargetMismatchError(Exception):
+    """Raised when a loaded artifact's target_name doesn't match expected."""
+
+    def __init__(self, loaded: str, expected: str) -> None:
+        super().__init__(
+            f"Model artifact has target_name='{loaded}' but "
+            f"expected target_name='{expected}'. "
+            f"Load the correct artifact for this target."
+        )
+        self.loaded = loaded
+        self.expected = expected
+
+
 def save_artifact(artifact: ModelArtifact, path: Path) -> None:
     """Serialize a ModelArtifact to *path* atomically.
 
@@ -60,6 +76,7 @@ def save_artifact(artifact: ModelArtifact, path: Path) -> None:
         "model": artifact.model.model_to_string(),
         "feature_names": artifact.feature_names,
         "feature_schema_version": artifact.feature_schema_version,
+        "target_name": artifact.target_name,
         "training_window_start": artifact.training_window_start.isoformat(),
         "training_window_end": artifact.training_window_end.isoformat(),
         "created_at": artifact.created_at.isoformat(),
@@ -72,14 +89,24 @@ def save_artifact(artifact: ModelArtifact, path: Path) -> None:
     tmp.replace(path)  # atomic on POSIX; near-atomic on Windows
 
 
-def load_artifact(path: Path) -> ModelArtifact:
+def load_artifact(
+    path: Path,
+    *,
+    expected_target: str | None = None,
+) -> ModelArtifact:
     """Load a ModelArtifact from *path*.
+
+    Parameters
+    ----------
+    path:            Path to the .pkl artifact file.
+    expected_target: If provided, verify the artifact's target_name matches.
 
     Raises
     ------
     FileNotFoundError:    if *path* does not exist.
     FeatureSchemaMismatch: if the stored feature_schema_version differs from
-                           the current FEATURE_SCHEMA_VERSION (requirement 7.3).
+                           the expected version for the target (requirement 7.3).
+    TargetMismatchError:  if expected_target is set and doesn't match.
     """
     path = Path(path)
     if not path.exists():
@@ -92,11 +119,22 @@ def load_artifact(path: Path) -> ModelArtifact:
         payload = pickle.load(f)
 
     stored_version = payload["feature_schema_version"]
-    if stored_version != FEATURE_SCHEMA_VERSION:
+    target_name = payload.get("target_name", "reached_base")
+
+    # Determine expected schema version based on target
+    if target_name in ("game_winner", "runs"):
+        expected_version = GAME_FEATURE_SCHEMA_VERSION
+    else:
+        expected_version = FEATURE_SCHEMA_VERSION
+
+    if stored_version != expected_version:
         raise FeatureSchemaMismatch(
             loaded=stored_version,
-            current=FEATURE_SCHEMA_VERSION,
+            current=expected_version,
         )
+
+    if expected_target is not None and target_name != expected_target:
+        raise TargetMismatchError(loaded=target_name, expected=expected_target)
 
     booster = lgb.Booster(model_str=payload["model"])
 
@@ -107,7 +145,13 @@ def load_artifact(path: Path) -> ModelArtifact:
         training_window_start=date.fromisoformat(payload["training_window_start"]),
         training_window_end=date.fromisoformat(payload["training_window_end"]),
         created_at=datetime.fromisoformat(payload["created_at"]),
+        target_name=target_name,
     )
 
 
-__all__ = ["FeatureSchemaMismatch", "load_artifact", "save_artifact"]
+__all__ = [
+    "FeatureSchemaMismatch",
+    "TargetMismatchError",
+    "load_artifact",
+    "save_artifact",
+]

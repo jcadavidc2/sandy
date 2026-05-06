@@ -270,4 +270,194 @@ def _upsert_feature_vector(
     )
 
 
-__all__ = ["FeatureRunStats", "run_features"]
+# ---------------------------------------------------------------------------
+# Phase 1.5: Game-level feature runner
+# ---------------------------------------------------------------------------
+
+
+def run_game_features(
+    engine: Engine,
+    game_pk: int | None = None,
+) -> FeatureRunStats:
+    """Build and persist game-level feature vectors.
+
+    If *game_pk* is given, process only that game.
+    Otherwise process all Final regular-season games.
+
+    Requirements: 12.3, 12.4, 12.5
+    """
+    from sandy.features.game_builder import build_game_feature_vector
+    from sandy.features.schema import GAME_FEATURE_NAMES, GAME_FEATURE_SCHEMA_VERSION
+
+    stats = FeatureRunStats()
+    t0 = time.monotonic()
+
+    with get_connection(engine) as conn:
+        games = _get_games_for_game_features(conn, game_pk)
+        stats.rows_read = len(games)
+
+        for row in games:
+            g_pk, game_date, home_code, away_code, home_starter_id, away_starter_id, venue_id = row
+
+            # Build features for home team
+            try:
+                home_fv = build_game_feature_vector(
+                    conn=conn,
+                    game_pk=g_pk,
+                    team_code=home_code,
+                    opp_team_code=away_code,
+                    home_starter_id=home_starter_id,
+                    away_starter_id=away_starter_id,
+                    game_date=game_date,
+                    venue_id=venue_id,
+                    is_home=True,
+                )
+                _upsert_game_feature_vector(conn, g_pk, home_code, home_fv.values)
+                stats.rows_written += 1
+            except Exception as exc:
+                logger.warning(
+                    "Game feature build failed (home)",
+                    extra={
+                        "component": "features.runner",
+                        "game_pk": g_pk,
+                        "team_code": home_code,
+                        "error": str(exc),
+                    },
+                )
+                stats.rows_omitted += 1
+
+            # Build features for away team
+            try:
+                away_fv = build_game_feature_vector(
+                    conn=conn,
+                    game_pk=g_pk,
+                    team_code=away_code,
+                    opp_team_code=home_code,
+                    home_starter_id=home_starter_id,
+                    away_starter_id=away_starter_id,
+                    game_date=game_date,
+                    venue_id=venue_id,
+                    is_home=False,
+                )
+                _upsert_game_feature_vector(conn, g_pk, away_code, away_fv.values)
+                stats.rows_written += 1
+            except Exception as exc:
+                logger.warning(
+                    "Game feature build failed (away)",
+                    extra={
+                        "component": "features.runner",
+                        "game_pk": g_pk,
+                        "team_code": away_code,
+                        "error": str(exc),
+                    },
+                )
+                stats.rows_omitted += 1
+
+        stats.games_processed = len({r[0] for r in games})
+
+    stats.elapsed_seconds = round(time.monotonic() - t0, 1)
+    logger.info(
+        "Game features run complete",
+        extra={
+            "component": "features.runner",
+            "target": "game",
+            "games_processed": stats.games_processed,
+            "duration_seconds": stats.elapsed_seconds,
+            "rows_written": stats.rows_written,
+            "rows_omitted": stats.rows_omitted,
+        },
+    )
+    return stats
+
+
+def _get_games_for_game_features(
+    conn: Connection,
+    game_pk: int | None,
+) -> list[tuple]:
+    """Return game rows to process for game-level features."""
+    if game_pk is not None:
+        rows = conn.execute(
+            text("""
+                SELECT game_pk, game_date, home_team_code, away_team_code,
+                       home_starter_id, away_starter_id, venue_id
+                FROM raw.games
+                WHERE game_pk = :game_pk AND status = 'Final' AND game_type = 'R'
+                ORDER BY game_date, game_pk
+            """),
+            {"game_pk": game_pk},
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            text("""
+                SELECT game_pk, game_date, home_team_code, away_team_code,
+                       home_starter_id, away_starter_id, venue_id
+                FROM raw.games
+                WHERE status = 'Final' AND game_type = 'R'
+                ORDER BY game_date, game_pk
+            """)
+        ).fetchall()
+    return [
+        (r[0], r[1], r[2].strip(), r[3].strip(), r[4], r[5], r[6])
+        for r in rows
+    ]
+
+
+def _upsert_game_feature_vector(
+    conn: Connection,
+    game_pk: int,
+    team_code: str,
+    values: dict,
+) -> None:
+    """UPSERT a game-level feature vector into derived.game_features."""
+    from sandy.features.schema import GAME_FEATURE_SCHEMA_VERSION
+
+    conn.execute(
+        text("""
+            INSERT INTO derived.game_features (
+                game_pk, team_code, feature_schema_version,
+                home_starter_era, home_starter_whip,
+                away_starter_era, away_starter_whip,
+                home_trailing15_rpg, away_trailing15_rpg,
+                home_season_obp, away_season_obp,
+                ballpark_id, is_home
+            ) VALUES (
+                :game_pk, :team_code, :feature_schema_version,
+                :home_starter_era, :home_starter_whip,
+                :away_starter_era, :away_starter_whip,
+                :home_trailing15_rpg, :away_trailing15_rpg,
+                :home_season_obp, :away_season_obp,
+                :ballpark_id, :is_home
+            )
+            ON CONFLICT (game_pk, team_code) DO UPDATE SET
+                feature_schema_version = EXCLUDED.feature_schema_version,
+                home_starter_era       = EXCLUDED.home_starter_era,
+                home_starter_whip      = EXCLUDED.home_starter_whip,
+                away_starter_era       = EXCLUDED.away_starter_era,
+                away_starter_whip      = EXCLUDED.away_starter_whip,
+                home_trailing15_rpg    = EXCLUDED.home_trailing15_rpg,
+                away_trailing15_rpg    = EXCLUDED.away_trailing15_rpg,
+                home_season_obp        = EXCLUDED.home_season_obp,
+                away_season_obp        = EXCLUDED.away_season_obp,
+                ballpark_id            = EXCLUDED.ballpark_id,
+                is_home                = EXCLUDED.is_home,
+                computed_at            = now()
+        """),
+        {
+            "game_pk": game_pk,
+            "team_code": team_code,
+            "feature_schema_version": GAME_FEATURE_SCHEMA_VERSION,
+            "home_starter_era": values.get("home_starter_era", 0.0),
+            "home_starter_whip": values.get("home_starter_whip", 0.0),
+            "away_starter_era": values.get("away_starter_era", 0.0),
+            "away_starter_whip": values.get("away_starter_whip", 0.0),
+            "home_trailing15_rpg": values.get("home_trailing15_rpg", 0.0),
+            "away_trailing15_rpg": values.get("away_trailing15_rpg", 0.0),
+            "home_season_obp": values.get("home_season_obp", 0.0),
+            "away_season_obp": values.get("away_season_obp", 0.0),
+            "ballpark_id": values.get("ballpark_id", 0),
+            "is_home": bool(values.get("is_home", False)),
+        },
+    )
+
+
+__all__ = ["FeatureRunStats", "run_features", "run_game_features"]

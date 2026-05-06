@@ -2,12 +2,16 @@
 
 Task 11.1: predict_from_features() — pure, no DB, no filesystem.
 Task 11.2: predict() — high-level wrapper that resolves inputs via DB.
+Phase 1.5: predict_game() — game-level prediction for game_winner/runs targets.
 
 predict_from_features() is the STABLE entry point that Phase 2+ agents
 will import directly. It takes a FeatureVector + ModelArtifact and returns
 a PredictionResult with probability and top-5 feature contributions.
 
-Requirements: 7.3, 8.1–8.8
+predict_game() is the Phase 1.5 entry point for game-level predictions.
+It dispatches to the correct model artifact and feature builder based on target.
+
+Requirements: 7.3, 8.1–8.8, 6.1–6.7
 """
 from __future__ import annotations
 
@@ -24,8 +28,14 @@ from sandy.db import create_engine, get_connection
 from sandy.features.builder import build_feature_vector
 from sandy.features.schema import FEATURE_SCHEMA_VERSION
 from sandy.logging import get_logger
-from sandy.schemas import FeatureVector, ModelArtifact, PredictionResult, TopFeature
-from sandy.train.artifact import FeatureSchemaMismatch, load_artifact
+from sandy.schemas import (
+    FeatureVector,
+    GameFeatureVector,
+    ModelArtifact,
+    PredictionResult,
+    TopFeature,
+)
+from sandy.train.artifact import FeatureSchemaMismatch, TargetMismatchError, load_artifact
 
 logger = get_logger("predict.predictor")
 
@@ -196,6 +206,185 @@ def predict(
 
 
 # ---------------------------------------------------------------------------
+# Phase 1.5: Game-level prediction (task 14.1)
+# ---------------------------------------------------------------------------
+
+
+def predict_game_from_features(
+    features: GameFeatureVector,
+    artifact: ModelArtifact,
+) -> PredictionResult:
+    """Pure game-level prediction: no DB, no filesystem.
+
+    For game_winner target: returns probability in [0, 1] (P(home wins)).
+    For runs target: returns expected runs (non-negative float).
+    """
+    # Schema version check
+    if features.feature_schema_version != artifact.feature_schema_version:
+        raise FeatureSchemaMismatch(
+            loaded=artifact.feature_schema_version,
+            current=features.feature_schema_version,
+        )
+
+    # Build input array in feature_names order
+    x = np.array(
+        [[features.values.get(name, 0.0) for name in artifact.feature_names]],
+        dtype=np.float64,
+    )
+
+    # Predict
+    raw_pred = float(artifact.model.predict(x)[0])
+
+    if artifact.target_name == "game_winner":
+        # Clamp to [0, 1]
+        proba = max(0.0, min(1.0, raw_pred))
+    else:
+        # Runs: clamp to non-negative
+        proba = max(0.0, raw_pred)
+
+    # Feature contributions (SHAP-style)
+    contribs = artifact.model.predict(x, pred_contrib=True)[0]
+    named_contribs = list(zip(artifact.feature_names, contribs[:-1]))
+    named_contribs.sort(key=lambda p: abs(p[1]), reverse=True)
+
+    top = [
+        TopFeature(name=name, contribution=float(contrib))
+        for name, contrib in named_contribs[:5]
+    ]
+
+    return PredictionResult(probability=proba, top_features=top)
+
+
+def predict_game(
+    team: str,
+    opp: str,
+    target: str = "game_winner",
+    *,
+    starter: str | None = None,
+    opp_starter: str | None = None,
+    as_of: date | None = None,
+    config: Config | None = None,
+) -> PredictionResult:
+    """High-level game prediction. Importable by Phase 2+ agents.
+
+    Parameters
+    ----------
+    team:        Team code (e.g. "SEA")
+    opp:         Opposing team code (e.g. "LAD")
+    target:      "game_winner" or "runs"
+    starter:     Home team's starting pitcher name (auto-resolves if None)
+    opp_starter: Away team's starting pitcher name (auto-resolves if None)
+    as_of:       Date ceiling for feature computation (default: today)
+    config:      Optional Config; if None, loads from env/TOML
+
+    Returns
+    -------
+    PredictionResult with:
+      - probability = P(home wins) for game_winner
+      - probability = expected runs for runs target
+
+    Raises
+    ------
+    InvalidInputError:    bad team code or matchup not found
+    MissingArtifactError: no model file for target
+    FeatureSchemaMismatch: model version mismatch
+
+    Requirements: 6.1–6.7, 8.1–8.5
+    """
+    from sandy.config import load_config
+    from sandy.features.game_builder import build_game_feature_vector
+    from sandy.schedule.client import get_todays_schedule, resolve_starter_for_matchup
+
+    if target not in ("game_winner", "runs"):
+        raise InvalidInputError(
+            f"Invalid target for predict_game: '{target}'. "
+            f"Use 'game_winner' or 'runs'."
+        )
+
+    if config is None:
+        config = load_config()
+
+    engine = create_engine(config)
+    effective_date = as_of if as_of is not None else date.today()
+
+    with get_connection(engine) as conn:
+        # Resolve team codes
+        team_code = _resolve_team_code(conn, team)
+        opp_code = _resolve_team_code(conn, opp)
+
+        # Determine home/away: look up today's schedule or use team as home
+        # Convention: team is the team we're predicting for
+        # We need to figure out who is home and who is away
+        home_code = team_code
+        away_code = opp_code
+        is_home = True
+
+        # Auto-resolve starters from schedule if not provided
+        if starter is None or opp_starter is None:
+            schedule = get_todays_schedule(config)
+            home_starter_name, away_starter_name = resolve_starter_for_matchup(
+                schedule, team_code, opp_code
+            )
+            # Determine actual home/away from schedule
+            for game in schedule:
+                h = game.home_team_code.strip().upper()
+                a = game.away_team_code.strip().upper()
+                if h == team_code.strip().upper() and a == opp_code.strip().upper():
+                    home_code = team_code
+                    away_code = opp_code
+                    is_home = True
+                    break
+                elif h == opp_code.strip().upper() and a == team_code.strip().upper():
+                    home_code = opp_code
+                    away_code = team_code
+                    is_home = False
+                    break
+
+            if starter is None:
+                starter = home_starter_name if is_home else away_starter_name
+            if opp_starter is None:
+                opp_starter = away_starter_name if is_home else home_starter_name
+
+        # Resolve starter IDs
+        home_starter_id = _resolve_starter(conn, starter if is_home else opp_starter)
+        away_starter_id = _resolve_starter(conn, opp_starter if is_home else starter)
+
+        # Get venue
+        venue_id = _get_team_venue(conn, home_code)
+
+        # Build game-level features
+        features = build_game_feature_vector(
+            conn=conn,
+            game_pk=None,
+            team_code=team_code,
+            opp_team_code=opp_code,
+            home_starter_id=home_starter_id,
+            away_starter_id=away_starter_id,
+            game_date=effective_date,
+            venue_id=venue_id,
+            is_home=is_home,
+        )
+
+    # Load artifact
+    artifact_path = config.model.artifact_path(target)
+    try:
+        artifact = load_artifact(artifact_path, expected_target=target)
+    except FileNotFoundError:
+        raise MissingArtifactError(artifact_path)
+
+    return predict_game_from_features(features, artifact)
+
+
+def _get_team_venue(conn: Connection, team_code: str) -> int | None:
+    """Get the venue_id for a team."""
+    row = conn.execute(
+        text("SELECT venue_id FROM raw.teams WHERE UPPER(team_code) = UPPER(:code)"),
+        {"code": team_code.strip()},
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+# ---------------------------------------------------------------------------
 # Input resolution helpers
 # ---------------------------------------------------------------------------
 
@@ -285,4 +474,6 @@ __all__ = [
     "MissingArtifactError",
     "predict",
     "predict_from_features",
+    "predict_game",
+    "predict_game_from_features",
 ]
