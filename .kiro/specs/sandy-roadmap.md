@@ -41,13 +41,19 @@ Each phase ships a thing that's useful on its own. No "big bang" reveals.
 
 Done-criteria: on the EC2, the operator can run `sandy predict --team SEA --opp LAD --inning 3 --starter "Walker Buehler"` and get a sensible JSON response.
 
-### Phase 2 — Live game state (no agents yet)
+### Phase 2 — Live game state + player-level features
 
 - Poller service that watches active MLB games via the live feed
 - In-memory (or Redis) cache of current state: inning, score, batter, pitcher, pitch count
 - Python API: `get_current_game_state(team_code) -> dict`
 - CLI extension: `sandy live --team SEA` prints current state
 - Prediction is still CLI: `sandy predict --live SEA` uses live state as inputs
+
+**Player-level feature enhancements (deferred from Phase 1):**
+- `lineup_spot1_season_obp`, `lineup_spot2_season_obp`, `lineup_spot3_season_obp` — OBP of each specific batter due up, computed from `raw.plays` for the current season before game_date. Data already exists in DB; deferred because prediction-time requires knowing the actual lineup (available from live feed in Phase 2).
+- `lineup_avg_recent_obp` — average OBP of the 3 due-up batters over trailing 15 games.
+- `starter_vs_team_era` — this starter's ERA specifically against this batting team historically.
+- When adding these: bump `FEATURE_SCHEMA_VERSION` to 3, update `inning_features` DDL with new columns, retrain model.
 
 Done-criteria: you can run `sandy predict --live SEA --inning 3` during a game and get a prediction conditioned on what's actually happening right now.
 

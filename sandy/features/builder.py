@@ -113,14 +113,54 @@ def build_feature_vector(
         ballpark_id = None
 
     # ------------------------------------------------------------------
-    # 5. Trailing-15 team offensive stats
+    # 6. Individual batter season OBP (new in schema v3)
+    # ------------------------------------------------------------------
+    # Resolve the actual batter IDs for the 3 due-up spots
+    if game_pk is not None and cutoff_ts is not None:
+        batter_ids = _get_due_up_batter_ids(
+            conn, game_pk, team_code, inning_number, cutoff_ts
+        )
+    else:
+        batter_ids = (None, None, None)
+
+    # Compute season OBP for each batter; fall back to team_season_obp if unknown
+    team_season_stats_early = _get_team_season_stats(conn, team_code, game_date)
+    fallback_obp = team_season_stats_early.get("obp") or 0.0
+
+    batter_obps = []
+    for batter_id in batter_ids:
+        if batter_id is not None:
+            obp = _get_batter_season_obp(conn, batter_id, game_date)
+            batter_obps.append(obp if obp is not None else fallback_obp)
+        else:
+            batter_obps.append(fallback_obp)
+
+    # ------------------------------------------------------------------
+    # 7. Trailing-15 team offensive stats
     # ------------------------------------------------------------------
     trailing = _get_trailing15_stats(conn, team_code, game_date)
     trailing15_rpg = trailing.get("rpg")
     trailing15_obp = trailing.get("obp")
 
     # ------------------------------------------------------------------
-    # 6. Assemble values dict
+    # 6. Within-game momentum features (new in schema v2)
+    # ------------------------------------------------------------------
+    if game_pk is not None and cutoff_ts is not None:
+        momentum = _get_within_game_context(
+            conn, game_pk, team_code, inning_number, cutoff_ts
+        )
+    else:
+        momentum = {"prev_reached": 0, "innings_reached": 0, "streak": 0}
+
+    # ------------------------------------------------------------------
+    # 7. Season-level team offensive baseline (new in schema v2)
+    # ------------------------------------------------------------------
+    season_stats = _get_team_season_stats(conn, team_code, game_date)
+    team_season_obp = season_stats.get("obp")
+    team_season_rpg = season_stats.get("rpg")
+
+    # ------------------------------------------------------------------
+    # 8. Assemble values dict
     # ------------------------------------------------------------------
     values: dict[str, float | int | bool] = {
         "opp_starter_era": era if era is not None else 0.0,
@@ -130,11 +170,19 @@ def build_feature_vector(
         "lineup_spot_1": lineup_spots[0],
         "lineup_spot_2": lineup_spots[1],
         "lineup_spot_3": lineup_spots[2],
+        "lineup_spot1_season_obp": batter_obps[0],
+        "lineup_spot2_season_obp": batter_obps[1],
+        "lineup_spot3_season_obp": batter_obps[2],
         "is_home": int(is_home) if is_home is not None else 0,
         "ballpark_id": ballpark_id if ballpark_id is not None else 0,
         "inning_number_feat": inning_number,
         "trailing15_rpg": trailing15_rpg if trailing15_rpg is not None else 0.0,
         "trailing15_obp": trailing15_obp if trailing15_obp is not None else 0.0,
+        "prev_inning_reached_base": momentum["prev_reached"],
+        "innings_reached_so_far": momentum["innings_reached"],
+        "consecutive_reach_streak": momentum["streak"],
+        "team_season_obp": team_season_obp if team_season_obp is not None else 0.0,
+        "team_season_rpg": team_season_rpg if team_season_rpg is not None else 0.0,
     }
 
     return FeatureVector(
@@ -379,6 +427,247 @@ def _get_trailing15_stats(
     obp = on_base / pa if pa > 0 else None
 
     return {"rpg": rpg, "obp": obp}
+
+
+def _get_within_game_context(
+    conn: Connection,
+    game_pk: int,
+    team_code: str,
+    inning_number: int,
+    cutoff_ts: datetime,
+) -> dict[str, int]:
+    """Compute within-game momentum features for the batting team.
+
+    Uses only innings strictly before the target inning (leakage-safe).
+
+    Returns:
+        prev_reached:    1 if team reached base in inning_number-1, else 0
+        innings_reached: count of prior innings this game where team reached base
+        streak:          current consecutive inning streak with a baserunner
+    """
+    if inning_number <= 1:
+        return {"prev_reached": 0, "innings_reached": 0, "streak": 0}
+
+    # Get is_reaches_base for each prior inning (grouped by inning number)
+    rows = conn.execute(
+        text("""
+            SELECT inning, BOOL_OR(is_reaches_base) AS reached
+            FROM raw.plays
+            WHERE game_pk = :game_pk
+              AND batting_team_code = :team_code
+              AND inning < :inning_number
+              AND (start_time_utc IS NULL OR start_time_utc < :cutoff_ts)
+            GROUP BY inning
+            ORDER BY inning ASC
+        """),
+        {
+            "game_pk": game_pk,
+            "team_code": team_code,
+            "inning_number": inning_number,
+            "cutoff_ts": cutoff_ts,
+        },
+    ).fetchall()
+
+    if not rows:
+        return {"prev_reached": 0, "innings_reached": 0, "streak": 0}
+
+    # Build a dict of inning -> reached
+    inning_results: dict[int, bool] = {int(r[0]): bool(r[1]) for r in rows}
+
+    # prev_inning_reached_base
+    prev_reached = int(inning_results.get(inning_number - 1, False))
+
+    # innings_reached_so_far
+    innings_reached = sum(1 for v in inning_results.values() if v)
+
+    # consecutive_reach_streak — count backwards from inning_number-1
+    streak = 0
+    for inn in range(inning_number - 1, 0, -1):
+        if inning_results.get(inn, False):
+            streak += 1
+        else:
+            break
+
+    return {
+        "prev_reached": prev_reached,
+        "innings_reached": innings_reached,
+        "streak": streak,
+    }
+
+
+def _get_team_season_stats(
+    conn: Connection,
+    team_code: str,
+    game_date: date,
+) -> dict[str, float | None]:
+    """Compute team OBP and RPG for the current season before game_date."""
+    season = game_date.year
+
+    rows = conn.execute(
+        text("""
+            SELECT game_pk
+            FROM raw.games
+            WHERE (home_team_code = :team OR away_team_code = :team)
+              AND game_date < :game_date
+              AND status = 'Final'
+              AND EXTRACT(YEAR FROM game_date) = :season
+        """),
+        {"team": team_code, "game_date": game_date, "season": season},
+    ).fetchall()
+
+    if not rows:
+        return {"obp": None, "rpg": None}
+
+    game_pks = [r[0] for r in rows]
+    pk_list = ",".join(str(pk) for pk in game_pks)
+
+    runs_row = conn.execute(
+        text(f"""
+            SELECT
+                SUM(CASE WHEN home_team_code = :team THEN home_score
+                         ELSE away_score END) AS total_runs,
+                COUNT(*) AS games_count
+            FROM raw.games
+            WHERE game_pk IN ({pk_list})
+        """),
+        {"team": team_code},
+    ).fetchone()
+
+    total_runs = float(runs_row[0] or 0)
+    games_count = int(runs_row[1] or 1)
+    rpg = total_runs / games_count if games_count > 0 else None
+
+    obp_row = conn.execute(
+        text(f"""
+            SELECT
+                SUM(CASE WHEN event_code IN ('single','double','triple','home_run',
+                                             'walk','hit_by_pitch') THEN 1 ELSE 0 END),
+                COUNT(*)
+            FROM raw.plays
+            WHERE game_pk IN ({pk_list})
+              AND batting_team_code = :team
+        """),
+        {"team": team_code},
+    ).fetchone()
+
+    on_base = int(obp_row[0] or 0)
+    pa = int(obp_row[1] or 0)
+    obp = on_base / pa if pa > 0 else None
+
+    return {"obp": obp, "rpg": rpg}
+
+
+def _get_due_up_batter_ids(
+    conn: Connection,
+    game_pk: int,
+    team_code: str,
+    inning_number: int,
+    cutoff_ts: datetime,
+) -> tuple[int | None, int | None, int | None]:
+    """Resolve the batter_ids of the 3 batters due up in the target inning.
+
+    Uses the same lineup-spot logic as _get_lineup_spots but returns the
+    actual player IDs instead of order numbers.
+    For inning 1 or no prior history, returns the first 3 batters seen.
+    """
+    if inning_number == 1:
+        # Get the first 3 batters from the lineup (batting_order 1,2,3)
+        rows = conn.execute(
+            text("""
+                SELECT DISTINCT ON (batting_order) batter_id
+                FROM raw.plays
+                WHERE game_pk = :game_pk
+                  AND batting_team_code = :team_code
+                  AND batting_order IS NOT NULL
+                  AND batting_order <= 3
+                ORDER BY batting_order, at_bat_index
+            """),
+            {"game_pk": game_pk, "team_code": team_code},
+        ).fetchall()
+        ids = [r[0] for r in rows]
+        while len(ids) < 3:
+            ids.append(None)
+        return (ids[0], ids[1], ids[2])
+
+    # Find the last batter who had a PA before cutoff
+    last_row = conn.execute(
+        text("""
+            SELECT batting_order, batter_id
+            FROM raw.plays
+            WHERE game_pk = :game_pk
+              AND batting_team_code = :team_code
+              AND start_time_utc < :cutoff_ts
+              AND batting_order IS NOT NULL
+            ORDER BY start_time_utc DESC, at_bat_index DESC
+            LIMIT 1
+        """),
+        {"game_pk": game_pk, "team_code": team_code, "cutoff_ts": cutoff_ts},
+    ).fetchone()
+
+    if last_row is None:
+        return (None, None, None)
+
+    last_spot = int(last_row[0])
+    # Next 3 spots in the 1-9 rotation
+    spots = [
+        (last_spot % 9) + 1,
+        ((last_spot % 9 + 1) % 9) + 1,
+        ((last_spot % 9 + 2) % 9) + 1,
+    ]
+
+    # Resolve batter_id for each spot from the game's lineup
+    ids = []
+    for spot in spots:
+        row = conn.execute(
+            text("""
+                SELECT batter_id
+                FROM raw.plays
+                WHERE game_pk = :game_pk
+                  AND batting_team_code = :team_code
+                  AND batting_order = :spot
+                  AND batter_id IS NOT NULL
+                ORDER BY at_bat_index DESC
+                LIMIT 1
+            """),
+            {"game_pk": game_pk, "team_code": team_code, "spot": spot},
+        ).fetchone()
+        ids.append(row[0] if row else None)
+
+    return (ids[0], ids[1], ids[2])
+
+
+def _get_batter_season_obp(
+    conn: Connection,
+    batter_id: int,
+    game_date: date,
+) -> float | None:
+    """Compute a batter's season OBP from raw.plays before game_date.
+
+    OBP = (H + BB + HBP) / total plate appearances
+    Only counts games in the same season before game_date.
+    Returns None if the batter has no plate appearances this season.
+    """
+    season = game_date.year
+    row = conn.execute(
+        text("""
+            SELECT
+                SUM(CASE WHEN p.event_code IN ('single','double','triple','home_run',
+                                               'walk','hit_by_pitch') THEN 1 ELSE 0 END) AS on_base,
+                COUNT(*) AS plate_appearances
+            FROM raw.plays p
+            JOIN raw.games g ON g.game_pk = p.game_pk
+            WHERE p.batter_id = :batter_id
+              AND g.game_date < :game_date
+              AND g.status = 'Final'
+              AND EXTRACT(YEAR FROM g.game_date) = :season
+        """),
+        {"batter_id": batter_id, "game_date": game_date, "season": season},
+    ).fetchone()
+
+    if row is None or row[1] is None or int(row[1]) == 0:
+        return None
+
+    return int(row[0] or 0) / int(row[1])
 
 
 __all__ = ["build_feature_vector"]

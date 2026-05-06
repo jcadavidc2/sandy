@@ -205,11 +205,28 @@ CREATE TABLE IF NOT EXISTS derived.inning_features (
     lineup_spot_1              SMALLINT    CHECK (lineup_spot_1 BETWEEN 1 AND 9),
     lineup_spot_2              SMALLINT    CHECK (lineup_spot_2 BETWEEN 1 AND 9),
     lineup_spot_3              SMALLINT    CHECK (lineup_spot_3 BETWEEN 1 AND 9),
+    lineup_spot1_season_obp    REAL,
+    lineup_spot2_season_obp    REAL,
+    lineup_spot3_season_obp    REAL,
     is_home                    BOOLEAN,
     ballpark_id                INTEGER,
     inning_number_feat         SMALLINT,
     trailing15_rpg             REAL,
     trailing15_obp             REAL,
+    prev_inning_reached_base   SMALLINT,
+    innings_reached_so_far     SMALLINT,
+    consecutive_reach_streak   SMALLINT,
+    team_season_obp            REAL,
+    team_season_rpg            REAL,
+
+    -- Within-game momentum context (schema v2)
+    prev_inning_reached_base   SMALLINT    DEFAULT 0,
+    innings_reached_so_far     SMALLINT    DEFAULT 0,
+    consecutive_reach_streak   SMALLINT    DEFAULT 0,
+
+    -- Season-level team offensive baseline (schema v2)
+    team_season_obp            REAL,
+    team_season_rpg            REAL,
 
     built_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (game_pk, team_code, inning_number)

@@ -220,15 +220,21 @@ def _upsert_feature_vector(
                 opp_starter_era, opp_starter_whip, opp_starter_k9,
                 opp_starter_pitches_before,
                 lineup_spot_1, lineup_spot_2, lineup_spot_3,
+                lineup_spot1_season_obp, lineup_spot2_season_obp, lineup_spot3_season_obp,
                 is_home, ballpark_id, inning_number_feat,
-                trailing15_rpg, trailing15_obp
+                trailing15_rpg, trailing15_obp,
+                prev_inning_reached_base, innings_reached_so_far, consecutive_reach_streak,
+                team_season_obp, team_season_rpg
             ) VALUES (
                 :game_pk, :team_code, :inning_number, :feature_schema_version,
                 :opp_starter_era, :opp_starter_whip, :opp_starter_k9,
                 :opp_starter_pitches_before,
                 :lineup_spot_1, :lineup_spot_2, :lineup_spot_3,
+                :lineup_spot1_season_obp, :lineup_spot2_season_obp, :lineup_spot3_season_obp,
                 :is_home, :ballpark_id, :inning_number_feat,
-                :trailing15_rpg, :trailing15_obp
+                :trailing15_rpg, :trailing15_obp,
+                :prev_inning_reached_base, :innings_reached_so_far, :consecutive_reach_streak,
+                :team_season_obp, :team_season_rpg
             )
             ON CONFLICT (game_pk, team_code, inning_number) DO UPDATE SET
                 feature_schema_version     = EXCLUDED.feature_schema_version,
@@ -239,11 +245,19 @@ def _upsert_feature_vector(
                 lineup_spot_1              = EXCLUDED.lineup_spot_1,
                 lineup_spot_2              = EXCLUDED.lineup_spot_2,
                 lineup_spot_3              = EXCLUDED.lineup_spot_3,
+                lineup_spot1_season_obp    = EXCLUDED.lineup_spot1_season_obp,
+                lineup_spot2_season_obp    = EXCLUDED.lineup_spot2_season_obp,
+                lineup_spot3_season_obp    = EXCLUDED.lineup_spot3_season_obp,
                 is_home                    = EXCLUDED.is_home,
                 ballpark_id                = EXCLUDED.ballpark_id,
                 inning_number_feat         = EXCLUDED.inning_number_feat,
                 trailing15_rpg             = EXCLUDED.trailing15_rpg,
                 trailing15_obp             = EXCLUDED.trailing15_obp,
+                prev_inning_reached_base   = EXCLUDED.prev_inning_reached_base,
+                innings_reached_so_far     = EXCLUDED.innings_reached_so_far,
+                consecutive_reach_streak   = EXCLUDED.consecutive_reach_streak,
+                team_season_obp            = EXCLUDED.team_season_obp,
+                team_season_rpg            = EXCLUDED.team_season_rpg,
                 built_at                   = now()
         """),
         {
