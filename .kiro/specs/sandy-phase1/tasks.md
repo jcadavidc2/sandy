@@ -64,17 +64,17 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 10.1_
 
 - [ ] 7. Implement the label generator
-  - [ ] 7.1 Implement `generate_labels_for_game()` (pure) in `sandy/labels/generator.py`: read `raw.plays` for a `game_pk`, skip if `raw.games.status != 'Final'`, group by `(batting_team_code, inning)`, emit one `InningLabel` per group with `reached_base = BOOL_OR(is_reaches_base)`
+  - [-] 7.1 Implement `generate_labels_for_game()` (pure) in `sandy/labels/generator.py`: read `raw.plays` for a `game_pk`, skip if `raw.games.status != 'Final'`, group by `(batting_team_code, inning)`, emit one `InningLabel` per group with `reached_base = BOOL_OR(is_reaches_base)`
     - _Requirements: 4.1, 4.2, 4.3, 4.6_
-  - [ ] 7.2 Implement the labels runner in `sandy/labels/runner.py` iterating all Final games, calling the pure generator, and UPSERTing `derived.inning_labels` keyed by `(game_pk, team_code, inning_number)` with a final log line containing `duration_seconds`, `rows_read`, `rows_written`
+  - [-] 7.2 Implement the labels runner in `sandy/labels/runner.py` iterating all Final games, calling the pure generator, and UPSERTing `derived.inning_labels` keyed by `(game_pk, team_code, inning_number)` with a final log line containing `duration_seconds`, `rows_read`, `rows_written`
     - _Requirements: 3.4, 4.4, 10.1, 10.2_
-  - [ ] 7.3 Write property-based test for label monotonicity
+  - [x] 7.3 Write property-based test for label monotonicity
     - **Property 2: Label monotonicity** — for any synthetic play-by-play where at least one reach-base event (`single`, `double`, `triple`, `home_run`, `walk`, `hit_by_pitch`, `field_error`) exists for a `(game_pk, team_code, inning)`, the Label_Generator produces `reached_base = true` for that row.
     - Use Hypothesis to generate arbitrary lists of play rows with at least one reach-base event injected per target inning, run the generator against an in-memory DB, and assert `reached_base` is `true`.
     - **Validates: Requirements 4.2, 4.5, 11.3**
 
 - [ ] 8. Implement the feature builder
-  - [ ] 8.1 Implement `sandy/features/schema.py` with `FEATURE_SCHEMA_VERSION = 1` and `FEATURE_NAMES` (the 12 names from the design: `opp_starter_era`, `opp_starter_whip`, `opp_starter_k9`, `opp_starter_pitches_before`, `lineup_spot_1..3`, `is_home`, `ballpark_id`, `inning_number_feat`, `trailing15_rpg`, `trailing15_obp`)
+  - [x] 8.1 Implement `sandy/features/schema.py` with `FEATURE_SCHEMA_VERSION = 1` and `FEATURE_NAMES` (the 12 names from the design: `opp_starter_era`, `opp_starter_whip`, `opp_starter_k9`, `opp_starter_pitches_before`, `lineup_spot_1..3`, `is_home`, `ballpark_id`, `inning_number_feat`, `trailing15_rpg`, `trailing15_obp`)
     - _Requirements: 5.2, 5.5_
   - [ ] 8.2 Implement `build_feature_vector()` (pure) in `sandy/features/builder.py` using a `cutoff_ts` computed from `min(start_time_utc)` of the target half-inning, bounding every same-game aggregate to rows strictly before `cutoff_ts` and cross-game trailing-15 aggregates to `game_date < :game_date`; handle the `game_pk=None` / `as_of` path for prediction with empty same-game history (pitches_before=0, lineup_spots=(1,2,3))
     - _Requirements: 5.1, 5.2, 5.3_
