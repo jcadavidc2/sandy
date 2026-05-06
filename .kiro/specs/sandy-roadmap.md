@@ -41,6 +41,18 @@ Each phase ships a thing that's useful on its own. No "big bang" reveals.
 
 Done-criteria: on the EC2, the operator can run `sandy predict --team SEA --opp LAD --inning 3 --starter "Walker Buehler"` and get a sensible JSON response.
 
+### Phase 1.5 — Additional prediction targets
+
+Immediately after Phase 1 ships. Uses the same data already in the DB — no new ingestion needed. Each target gets its own label generator, model artifact, and predict function.
+
+- **Game winner:** P(home team wins). Binary classification. One row per game. Same features as reaches-base plus score differential context. Label: `home_team_wins = home_score > away_score`.
+- **Total runs:** Expected runs per game or per inning. Regression (`objective: regression`). Label: actual runs scored.
+- **Player props (hits, Ks, HRs):** Per (game, player) predictions. Needs player-centric feature builder (batter season stats, matchup history). Medium effort.
+- CLI extension: `sandy predict --target game_winner --team SEA --opp LAD`
+- Architecture: `--target` flag selects which model artifact to load and which predict function to call.
+
+Done-criteria: `sandy predict --target game_winner --team SEA --opp LAD` returns a win probability.
+
 ### Phase 2 — Live game state + player-level features
 
 - Poller service that watches active MLB games via the live feed
