@@ -83,7 +83,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
   - [ ]* 8.4 Write unit tests asserting feature-builder determinism (identical inputs → identical outputs) and leakage prevention (no event with `start_time_utc >= cutoff_ts` influences the result)
     - _Requirements: 5.1, 5.3_
 
-- [ ] 9. Checkpoint — Ingestion, labels, and features pipelines
+- [x] 9. Checkpoint — Ingestion, labels, and features pipelines
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 10. Implement the training pipeline
@@ -128,7 +128,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
   - [x] 13.1 Write the end-to-end integration test: spin up a Postgres via `testcontainers[postgres]`, bootstrap the schema, seed a minimal dataset (one team pair, one player as starter, one Final game with a handful of plays across three innings), run `sandy labels build`, `sandy features build`, `sandy train --seed 42`, then invoke `sandy predict --team ... --opp ... --inning 3 --starter "..."` via `subprocess.run` and assert exit code 0, valid JSON on stdout, and a numeric `probability` in `[0.0, 1.0]`
     - _Requirements: 11.5, 11.6_
 
-- [ ] 14. Final checkpoint — Full suite
+- [x] 14. Final checkpoint — Full suite
   - Ensure all tests pass (`uv run pytest` exits 0), ask the user if questions arise.
 
 ## Notes
