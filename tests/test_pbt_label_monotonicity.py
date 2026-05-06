@@ -149,8 +149,12 @@ def test_label_monotonicity(
                              "top", batting_team, home, code)
                 at_bat += 1
 
-        # Run the generator
+        # Run the generator inside the same transaction
         labels = generate_labels_for_game(conn, game_pk)
+
+        # Clean up this game so the next example starts fresh
+        conn.execute(text("DELETE FROM raw.plays WHERE game_pk = :pk"), {"pk": game_pk})
+        conn.execute(text("DELETE FROM raw.games WHERE game_pk = :pk"), {"pk": game_pk})
 
     # Find the label for our target inning
     target_labels = [
