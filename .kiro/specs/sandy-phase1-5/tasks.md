@@ -117,7 +117,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
     - Log validation MAE and RMSE as structured JSON
     - Return `ModelArtifact` with `target_name="runs"`
     - _Requirements: 5.1, 5.2, 5.3, 5.5_
-  - [ ] 10.3 Extend `sandy/train/artifact.py` to include `target_name` in serialized metadata and resolve paths by target
+  - [x] 10.3 Extend `sandy/train/artifact.py` to include `target_name` in serialized metadata and resolve paths by target
     - `save_artifact()` stores `target_name` in the pickle dict
     - `load_artifact()` verifies `target_name` matches expected (raises `TargetMismatchError` if not)
     - Path resolution: `{model_dir}/{target_name}.pkl`
