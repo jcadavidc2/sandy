@@ -100,6 +100,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    {
+        "name": "get_team_recent_games",
+        "description": "Get a team's recent game results (scores, opponents, wins/losses). Use this to answer questions like 'how have the Mariners been doing?' or 'what were SEA's last 5 games?'",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "team_code": {"type": "string", "description": "3-letter team code (e.g. SEA)"},
+                "count": {"type": "integer", "description": "Number of recent games to return (default: 5, max: 20)"},
+            },
+            "required": ["team_code"],
+        },
+    },
 ]
 
 
@@ -125,6 +137,8 @@ def handle_tool_call(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any
             return _handle_player_stats(arguments)
         elif tool_name == "get_calibration_report":
             return _handle_calibration_report(arguments)
+        elif tool_name == "get_team_recent_games":
+            return _handle_team_recent_games(arguments)
         else:
             return {"error": f"Unknown tool: {tool_name}"}
     except Exception as exc:
@@ -498,6 +512,77 @@ def _handle_calibration_report(args: dict[str, Any]) -> dict[str, Any]:
             "accuracy_by_target": report.accuracy_by_target,
             "accuracy_by_confidence": report.accuracy_by_confidence,
             "summary": report.natural_language_summary,
+        },
+    }
+
+
+def _handle_team_recent_games(args: dict[str, Any]) -> dict[str, Any]:
+    """Return a team's recent game results."""
+    from sqlalchemy import text
+    from sandy.config import load_config
+    from sandy.db import create_engine
+
+    team_code = args.get("team_code", "").upper().strip()
+    count = min(args.get("count", 5), 20)
+    config = load_config()
+    engine = create_engine(config)
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT game_date, home_team_code, away_team_code,
+                       home_score, away_score, status
+                FROM raw.games
+                WHERE (home_team_code = :team OR away_team_code = :team)
+                  AND status = 'Final'
+                ORDER BY game_date DESC, game_pk DESC
+                LIMIT :count
+            """),
+            {"team": team_code, "count": count},
+        ).fetchall()
+
+    if not rows:
+        return {"error": f"No games found for {team_code}."}
+
+    games = []
+    wins = 0
+    losses = 0
+    total_runs_for = 0
+    total_runs_against = 0
+
+    for row in rows:
+        game_date, home, away, home_score, away_score, status = row
+        home = home.strip()
+        away = away.strip()
+
+        is_home = (home == team_code)
+        opponent = away if is_home else home
+        team_runs = home_score if is_home else away_score
+        opp_runs = away_score if is_home else home_score
+        won = team_runs > opp_runs
+
+        if won:
+            wins += 1
+        else:
+            losses += 1
+        total_runs_for += team_runs
+        total_runs_against += opp_runs
+
+        games.append({
+            "date": str(game_date),
+            "opponent": opponent,
+            "score": f"{team_runs}-{opp_runs}",
+            "result": "W" if won else "L",
+            "home_away": "home" if is_home else "away",
+        })
+
+    return {
+        "team": team_code,
+        "recent_games": games,
+        "summary": {
+            "record": f"{wins}-{losses}",
+            "runs_scored_avg": round(total_runs_for / len(games), 1),
+            "runs_allowed_avg": round(total_runs_against / len(games), 1),
         },
     }
 

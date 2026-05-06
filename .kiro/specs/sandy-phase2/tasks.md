@@ -9,7 +9,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
 ## Tasks
 
 - [ ] 1. DB schema — prediction_log table
-  - [-] 1.1 Add DDL for `derived.prediction_log` table to `sandy/db.py`
+  - [x] 1.1 Add DDL for `derived.prediction_log` table to `sandy/db.py`
     - Columns: `id` (BIGSERIAL PK), `game_pk` (INTEGER NOT NULL, FK → raw.games), `target` (TEXT NOT NULL), `team_code` (CHAR(3) NOT NULL), `inning_number` (SMALLINT nullable), `probability` (REAL NOT NULL), `confidence_level` (TEXT NOT NULL, CHECK IN ('HIGH','LOW')), `features_snapshot` (JSONB NOT NULL), `predicted_at_utc` (TIMESTAMPTZ NOT NULL DEFAULT now()), `actual_outcome` (TEXT nullable), `outcome_filled_at_utc` (TIMESTAMPTZ nullable), `was_correct` (BOOLEAN nullable)
     - Add indexes: `prediction_log_game_idx` on (game_pk), `prediction_log_target_idx` on (target, predicted_at_utc), `prediction_log_unresolved_idx` on (game_pk) WHERE actual_outcome IS NULL
     - Use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` for idempotent bootstrap
