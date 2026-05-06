@@ -261,6 +261,28 @@ class ScheduledGame:
     status: str
 
 
+# ---------------------------------------------------------------------------
+# Phase 2: Over/under and total runs
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OverUnderLine:
+    """A single over/under threshold with its probability."""
+    threshold: float
+    probability_over: float
+
+
+@dataclass(frozen=True)
+class TotalRunsResult:
+    """Total runs prediction with per-team breakdown and over/under lines."""
+    home_expected_runs: float
+    away_expected_runs: float
+    total_expected_runs: float
+    over_under_lines: list[OverUnderLine]
+    residual_std: float
+
+
 __all__ = [
     "FeatureVector",
     "GameRow",

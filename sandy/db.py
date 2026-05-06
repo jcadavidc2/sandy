@@ -268,6 +268,31 @@ CREATE TABLE IF NOT EXISTS derived.game_features (
 
 CREATE INDEX IF NOT EXISTS game_features_version_idx
     ON derived.game_features (feature_schema_version);
+
+-- Phase 2: prediction logging for self-evaluation
+
+CREATE TABLE IF NOT EXISTS derived.prediction_log (
+    id                    BIGSERIAL       PRIMARY KEY,
+    game_pk               INTEGER         NOT NULL,
+    target                TEXT            NOT NULL,
+    team_code             CHAR(3)         NOT NULL,
+    inning_number         SMALLINT,
+    probability           REAL            NOT NULL,
+    confidence_level      TEXT            NOT NULL
+                                          CHECK (confidence_level IN ('HIGH', 'LOW')),
+    features_snapshot     JSONB           NOT NULL,
+    predicted_at_utc      TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    actual_outcome        TEXT,
+    outcome_filled_at_utc TIMESTAMPTZ,
+    was_correct           BOOLEAN
+);
+
+CREATE INDEX IF NOT EXISTS prediction_log_game_idx
+    ON derived.prediction_log (game_pk);
+CREATE INDEX IF NOT EXISTS prediction_log_target_idx
+    ON derived.prediction_log (target, predicted_at_utc);
+CREATE INDEX IF NOT EXISTS prediction_log_unresolved_idx
+    ON derived.prediction_log (game_pk) WHERE actual_outcome IS NULL;
 """
 
 
