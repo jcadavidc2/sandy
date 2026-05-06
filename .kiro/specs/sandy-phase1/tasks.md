@@ -87,7 +87,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 10. Implement the training pipeline
-  - [ ] 10.1 Implement `chronological_split()` (pure) in `sandy/train/split.py`: sort unique `(game_date, game_pk)` ascending, define the last 15% of games by date as the validation set, and assign rows to training or validation by their `game_pk`
+  - [x] 10.1 Implement `chronological_split()` (pure) in `sandy/train/split.py`: sort unique `(game_date, game_pk)` ascending, define the last 15% of games by date as the validation set, and assign rows to training or validation by their `game_pk`
     - _Requirements: 6.2_
   - [ ] 10.2 Implement `train_model()` in `sandy/train/trainer.py`: load the labels⨝features frame for the training window, split via 10.1, fit LightGBM with `objective=binary`, `deterministic=True`, `force_col_wise=True`, `seed=<--seed>`, `num_boost_round=500`, `early_stopping_rounds=50`; compute ROC AUC, log loss, Brier score, positive/negative counts on validation and log them as a single INFO JSON line; raise `TrainingQualityError` if validation ROC AUC < 0.52
     - _Requirements: 6.1, 6.3, 6.4, 6.6_
