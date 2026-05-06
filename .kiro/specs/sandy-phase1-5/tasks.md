@@ -171,7 +171,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 14. Multi-target predictor
-  - [ ] 14.1 Implement `predict_game()` in `sandy/predict/predictor.py`
+  - [x] 14.1 Implement `predict_game()` in `sandy/predict/predictor.py`
     - Accepts: team, opp, target ("game_winner" | "runs"), starter (optional), opp_starter (optional), as_of, config
     - Dispatches to correct model artifact and feature builder based on target
     - Auto-resolves starters from today's schedule when not provided (for game_winner/runs)
