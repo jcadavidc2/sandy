@@ -59,4 +59,25 @@ FEATURE_NAMES: list[str] = [
 
 assert len(FEATURE_NAMES) == 20, "FEATURE_NAMES must have exactly 20 entries"
 
-__all__ = ["FEATURE_NAMES", "FEATURE_SCHEMA_VERSION"]
+# ---------------------------------------------------------------------------
+# Phase 1.5: Game-level feature schema (for game_winner and runs targets)
+# ---------------------------------------------------------------------------
+
+GAME_FEATURE_SCHEMA_VERSION: int = 1
+
+GAME_FEATURE_NAMES: list[str] = [
+    "home_starter_era",       # home starting pitcher season ERA
+    "home_starter_whip",      # home starting pitcher season WHIP
+    "away_starter_era",       # away starting pitcher season ERA
+    "away_starter_whip",      # away starting pitcher season WHIP
+    "home_trailing15_rpg",    # home team runs/game over trailing 15 games
+    "away_trailing15_rpg",    # away team runs/game over trailing 15 games
+    "home_season_obp",        # home team season OBP
+    "away_season_obp",        # away team season OBP
+    "ballpark_id",            # venue ID
+    "is_home",                # 1 if predicting for home team, 0 for away
+]
+
+assert len(GAME_FEATURE_NAMES) == 10, "GAME_FEATURE_NAMES must have exactly 10 entries"
+
+__all__ = ["FEATURE_NAMES", "FEATURE_SCHEMA_VERSION", "GAME_FEATURE_NAMES", "GAME_FEATURE_SCHEMA_VERSION"]

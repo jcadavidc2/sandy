@@ -217,6 +217,48 @@ class ModelArtifact:
     training_window_start: date
     training_window_end: date
     created_at: datetime
+    target_name: str = "reached_base"  # Phase 1.5: identifies which model this is
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.5: Game-level prediction dataclasses
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GameWinnerLabel:
+    """Label for game winner prediction: did the home team win?"""
+    game_pk: int
+    home_team_wins: bool
+
+
+@dataclass(frozen=True)
+class RunsLabel:
+    """Label for runs prediction: how many runs did this team score?"""
+    game_pk: int
+    team_code: str
+    runs: int
+
+
+@dataclass(frozen=True)
+class GameFeatureVector:
+    """Game-level feature vector for game_winner and runs predictions."""
+    game_pk: int | None
+    team_code: str
+    feature_schema_version: int
+    values: dict[str, float | int | bool]
+
+
+@dataclass(frozen=True)
+class ScheduledGame:
+    """A game from today's MLB schedule with probable pitchers."""
+    game_pk: int
+    home_team_code: str
+    away_team_code: str
+    home_probable_pitcher: str | None
+    away_probable_pitcher: str | None
+    game_time_utc: datetime
+    status: str
 
 
 __all__ = [

@@ -225,6 +225,49 @@ CREATE TABLE IF NOT EXISTS derived.inning_features (
 
 CREATE INDEX IF NOT EXISTS inning_features_version_idx
     ON derived.inning_features (feature_schema_version);
+
+-- Phase 1.5: game-level prediction targets
+
+CREATE TABLE IF NOT EXISTS derived.game_winner_labels (
+    game_pk        INTEGER     PRIMARY KEY
+                               REFERENCES raw.games(game_pk)
+                               ON DELETE CASCADE,
+    home_team_wins BOOLEAN     NOT NULL,
+    labeled_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS derived.runs_labels (
+    game_pk    INTEGER     NOT NULL
+                           REFERENCES raw.games(game_pk)
+                           ON DELETE CASCADE,
+    team_code  CHAR(3)     NOT NULL REFERENCES raw.teams(team_code),
+    runs       INTEGER     NOT NULL,
+    labeled_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (game_pk, team_code)
+);
+
+CREATE TABLE IF NOT EXISTS derived.game_features (
+    game_pk                INTEGER     NOT NULL
+                                       REFERENCES raw.games(game_pk)
+                                       ON DELETE CASCADE,
+    team_code              CHAR(3)     NOT NULL REFERENCES raw.teams(team_code),
+    feature_schema_version INTEGER     NOT NULL,
+    home_starter_era       REAL,
+    home_starter_whip      REAL,
+    away_starter_era       REAL,
+    away_starter_whip      REAL,
+    home_trailing15_rpg    REAL,
+    away_trailing15_rpg    REAL,
+    home_season_obp        REAL,
+    away_season_obp        REAL,
+    ballpark_id            INTEGER,
+    is_home                BOOLEAN     NOT NULL,
+    computed_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (game_pk, team_code)
+);
+
+CREATE INDEX IF NOT EXISTS game_features_version_idx
+    ON derived.game_features (feature_schema_version);
 """
 
 
