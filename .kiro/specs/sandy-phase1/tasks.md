@@ -101,7 +101,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
 - [ ] 11. Implement the predictor
   - [x] 11.1 Implement `predict_from_features()` (pure) in `sandy/predict/predictor.py`: verify `features.feature_schema_version == artifact.feature_schema_version`, compute probability via `artifact.model.predict(x)`, compute SHAP-style contributions via `pred_contrib=True`, return a `PredictionResult` with `probability` and the top-5 features by `|contribution|` descending
     - _Requirements: 7.3, 8.2, 8.3_
-  - [ ] 11.2 Implement the high-level `predict()` wrapper: validate `inning ∈ 1..9` (exit 2), resolve `--team` and `--opp` against `raw.teams.team_code` case-insensitively (exit 2), resolve `--starter` via exact case-insensitive match with a Jaro-Winkler fuzzy fallback returning top-5 candidates on ambiguity or miss (exit 2), honor `--as-of`, call `build_feature_vector(game_pk=None, as_of=...)`, load the latest artifact (exit 3 if missing), and return the `PredictionResult`
+  - [x] 11.2 Implement the high-level `predict()` wrapper: validate `inning ∈ 1..9` (exit 2), resolve `--team` and `--opp` against `raw.teams.team_code` case-insensitively (exit 2), resolve `--starter` via exact case-insensitive match with a Jaro-Winkler fuzzy fallback returning top-5 candidates on ambiguity or miss (exit 2), honor `--as-of`, call `build_feature_vector(game_pk=None, as_of=...)`, load the latest artifact (exit 3 if missing), and return the `PredictionResult`
     - _Requirements: 8.1, 8.4, 8.5, 8.6, 8.7, 8.8_
   - [-] 11.3 Write property-based test for probability range
     - **Property 4: Probability range** — the `probability` returned by the Predictor falls in the closed interval `[0.0, 1.0]` for every generated input.
