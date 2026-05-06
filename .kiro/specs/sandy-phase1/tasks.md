@@ -29,11 +29,11 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 9.1, 9.2, 9.4_
 
 - [ ] 3. Implement the database layer
-  - [ ] 3.1 Implement `sandy/db.py`: SQLAlchemy engine factory from `Config.database`, session context manager, and a `bootstrap_schema()` helper that runs DDL idempotently
+  - [x] 3.1 Implement `sandy/db.py`: SQLAlchemy engine factory from `Config.database`, session context manager, and a `bootstrap_schema()` helper that runs DDL idempotently
     - _Requirements: 3.5, 3.6, 9.1_
-  - [ ] 3.2 Write DDL for the `raw` schema: `teams`, `players`, `games` (with FKs, indexes, `raw_payload_hash`), `plays` (composite PK, `is_reaches_base`, JSONB `raw`, `ON DELETE CASCADE` to games), `pitcher_game_stats`, and `ingest_failures`
+  - [x] 3.2 Write DDL for the `raw` schema: `teams`, `players`, `games` (with FKs, indexes, `raw_payload_hash`), `plays` (composite PK, `is_reaches_base`, JSONB `raw`, `ON DELETE CASCADE` to games), `pitcher_game_stats`, and `ingest_failures`
     - _Requirements: 3.1, 3.3_
-  - [ ] 3.3 Write DDL for the `derived` schema: `inning_labels` and `inning_features` with composite PK `(game_pk, team_code, inning_number)` and the `feature_schema_version` column on `inning_features`
+  - [x] 3.3 Write DDL for the `derived` schema: `inning_labels` and `inning_features` with composite PK `(game_pk, team_code, inning_number)` and the `feature_schema_version` column on `inning_features`
     - _Requirements: 3.2, 3.4, 5.5_
   - [x] 3.4 Define `TypedDict` / frozen-dataclass row types in `sandy/schemas.py` for every raw and derived table, plus `FeatureVector`, `ModelArtifact`, `TopFeature`, `PredictionResult`
     - _Requirements: 3.1, 3.2, 7.1_
