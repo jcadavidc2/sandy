@@ -191,13 +191,13 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
     - **Validates: Requirements 6.3**
 
 - [ ] 15. CLI extensions
-  - [ ] 15.1 Extend `sandy predict` command with `--target` option (choices: `reached_base`, `game_winner`, `runs`; default: `reached_base`)
+  - [x] 15.1 Extend `sandy predict` command with `--target` option (choices: `reached_base`, `game_winner`, `runs`; default: `reached_base`)
     - When target is `game_winner`/`runs`: `--inning` not required, `--starter` optional (auto-resolves)
     - When target is `reached_base`: `--inning` and `--starter` required (Phase 1 behavior preserved)
     - Output JSON with `win_probability` (game_winner) or `expected_runs` (runs) field
     - Exit codes: 2 (invalid input), 3 (missing artifact), 1 (other errors)
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7_
-  - [ ] 15.2 Implement `sandy today` command in `sandy/cli/today_cmd.py`
+  - [x] 15.2 Implement `sandy today` command in `sandy/cli/today_cmd.py`
     - Display table: game time (local TZ), away team, home team, away pitcher, home pitcher, status
     - Show "TBD" for unannounced pitchers
     - Show "No MLB games scheduled for today" when empty
