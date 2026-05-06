@@ -224,7 +224,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
     - `sandy features build --target game_winner` (or `runs`) → `run_game_features()`
     - Default behavior (no `--target` or `--target reached_base`) unchanged
     - _Requirements: 12.1, 12.2, 12.3_
-  - [ ] 15.6 Extend `sandy train` CLI command to support `--target` flag
+  - [x] 15.6 Extend `sandy train` CLI command to support `--target` flag
     - `sandy train --target game_winner` → `train_game_winner_model()`
     - `sandy train --target runs` → `train_runs_model()`
     - Default (`--target reached_base`) unchanged
