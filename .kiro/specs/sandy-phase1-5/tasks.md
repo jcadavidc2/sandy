@@ -111,7 +111,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
     - Raise `TrainingQualityError` if ROC AUC < 0.52
     - Return `ModelArtifact` with `target_name="game_winner"`
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.6_
-  - [ ] 10.2 Extend `sandy/train/trainer.py` with `train_runs_model()` function
+  - [x] 10.2 Extend `sandy/train/trainer.py` with `train_runs_model()` function
     - Load runs_labels ⨝ game_features join from Postgres
     - Fit LightGBM with `objective: regression`, chronological split, deterministic training
     - Log validation MAE and RMSE as structured JSON
