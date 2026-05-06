@@ -42,7 +42,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 5. Implement MLB Stats API client and parsers
-  - [ ] 5.1 Implement `MlbStatsClient` in `sandy/ingest/client.py` with a token-bucket limiter (≤ `config.ingest.max_rps`, default 10), exponential-backoff retry (base 1.0s, factor 2, jitter ±25%, max 5 attempts) on 429 and 5xx, and non-retryable classification for other 4xx / JSON decode errors
+  - [x] 5.1 Implement `MlbStatsClient` in `sandy/ingest/client.py` with a token-bucket limiter (≤ `config.ingest.max_rps`, default 10), exponential-backoff retry (base 1.0s, factor 2, jitter ±25%, max 5 attempts) on 429 and 5xx, and non-retryable classification for other 4xx / JSON decode errors
     - _Requirements: 1.3, 1.7_
   - [ ] 5.2 Implement pure parsers in `sandy/ingest/parsers.py` converting `/v1/schedule`, `/v1.1/game/{pk}/feed/live`, `/v1/teams`, and `/v1/people` responses into the `TypedDict` row types from task 3.4, including derivation of `is_reaches_base` from the MLB event code set `{single, double, triple, home_run, walk, hit_by_pitch, field_error}` and `raw_payload_hash` (sha256 of the source JSON)
     - _Requirements: 1.1, 4.2_
