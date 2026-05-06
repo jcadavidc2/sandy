@@ -135,7 +135,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
     - **Validates: Requirements 4.5, 5.4, 13.1, 13.3**
 
 - [ ] 11. Config extension for multi-target model paths
-  - [ ] 11.1 Extend `ModelConfig` in `sandy/config.py` to support `model_dir` (directory) with `artifact_path(target: str) -> Path` helper
+  - [x] 11.1 Extend `ModelConfig` in `sandy/config.py` to support `model_dir` (directory) with `artifact_path(target: str) -> Path` helper
     - `MLB_MODEL_DIR` env var overrides the model directory
     - `MLB_MODEL_PATH` continues to work for `reached_base` (backward compat)
     - Default model_dir: `./models/`
