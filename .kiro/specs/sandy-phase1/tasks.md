@@ -109,7 +109,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - **Validates: Requirements 8.2, 11.1**
 
 - [ ] 12. Wire up the `sandy` CLI with Click
-  - [ ] 12.1 Implement the top-level Click group in `sandy/cli/main.py` with `--config`, `--log-level`, and `--version`, wiring `load_config()` and `configure_logging()` into the group's context
+  - [x] 12.1 Implement the top-level Click group in `sandy/cli/main.py` with `--config`, `--log-level`, and `--version`, wiring `load_config()` and `configure_logging()` into the group's context
     - _Requirements: 9.4, 10.3_
   - [ ] 12.2 Implement `sandy ingest backfill [--seasons N] [--start-season YYYY]` and `sandy ingest incremental` subcommands delegating to `ingest.service`, emitting the final `duration_seconds` / `rows_read` / `rows_written` log line
     - _Requirements: 1.1, 2.1, 10.2_
@@ -125,7 +125,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 8.4, 8.5, 8.6, 8.8, 9.2_
 
 - [ ] 13. End-to-end integration
-  - [ ] 13.1 Write the end-to-end integration test: spin up a Postgres via `testcontainers[postgres]`, bootstrap the schema, seed a minimal dataset (one team pair, one player as starter, one Final game with a handful of plays across three innings), run `sandy labels build`, `sandy features build`, `sandy train --seed 42`, then invoke `sandy predict --team ... --opp ... --inning 3 --starter "..."` via `subprocess.run` and assert exit code 0, valid JSON on stdout, and a numeric `probability` in `[0.0, 1.0]`
+  - [x] 13.1 Write the end-to-end integration test: spin up a Postgres via `testcontainers[postgres]`, bootstrap the schema, seed a minimal dataset (one team pair, one player as starter, one Final game with a handful of plays across three innings), run `sandy labels build`, `sandy features build`, `sandy train --seed 42`, then invoke `sandy predict --team ... --opp ... --inning 3 --starter "..."` via `subprocess.run` and assert exit code 0, valid JSON on stdout, and a numeric `probability` in `[0.0, 1.0]`
     - _Requirements: 11.5, 11.6_
 
 - [ ] 14. Final checkpoint — Full suite
