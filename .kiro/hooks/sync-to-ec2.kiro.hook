@@ -1,5 +1,5 @@
 {
-  "enabled": true,
+  "enabled": false,
   "name": "Sync to EC2",
   "description": "After each spec task completes, commits any staged changes, pushes to GitHub, then pulls on the EC2 so it's always current.",
   "version": "1",
@@ -8,6 +8,6 @@
   },
   "then": {
     "type": "runCommand",
-    "command": "powershell -NoProfile -Command \"Set-Location 'C:\\Users\\Julian Cadavid\\Desktop\\sandy_beta'; git add -A; $diff = git diff --cached --quiet; if ($LASTEXITCODE -ne 0) { git commit -m 'auto: sync after task' }; git push --set-upstream origin main 2>$null; ssh sandy-ec2 'cd ~/sandy; git pull'\""
+    "command": "powershell -NoProfile -Command \"Set-Location 'C:\\Users\\Julian Cadavid\\Desktop\\sandy_beta'; git add -A; git diff --cached --quiet; if ($LASTEXITCODE -ne 0) { git commit -m 'auto: sync after task' }; git push --set-upstream origin main; ssh sandy-ec2 'cd ~/sandy; git pull'\""
   }
 }
