@@ -204,7 +204,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
     - Exit code 0 on success, 1 on API errors
     - Register in `sandy/cli/main.py`
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
-  - [ ] 15.3 Implement `sandy predict-all` command in `sandy/cli/predict_all_cmd.py`
+  - [x] 15.3 Implement `sandy predict-all` command in `sandy/cli/predict_all_cmd.py`
     - Fetch today's schedule, resolve probable pitchers
     - Run game_winner + runs predictions for every game with both pitchers announced
     - Output summary table: away team, home team, P(home wins), away expected runs, home expected runs, away starter, home starter
@@ -218,7 +218,7 @@ All code targets Python 3.11, managed by `uv`. Reuses the existing EC2 + Postgre
     - Generate random lists of prediction results
     - Assert: `--json` output is valid JSON array with required fields per element
     - **Validates: Requirements 11.4**
-  - [ ] 15.5 Extend `sandy labels build` and `sandy features build` CLI commands to support `--target` flag dispatching to game-level runners
+  - [x] 15.5 Extend `sandy labels build` and `sandy features build` CLI commands to support `--target` flag dispatching to game-level runners
     - `sandy labels build --target game_winner` → `run_game_winner_labels()`
     - `sandy labels build --target runs` → `run_runs_labels()`
     - `sandy features build --target game_winner` (or `runs`) → `run_game_features()`
