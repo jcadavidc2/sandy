@@ -78,7 +78,7 @@ All code targets Python 3.11, managed by `uv`. Postgres runs via docker-compose;
     - _Requirements: 5.2, 5.5_
   - [x] 8.2 Implement `build_feature_vector()` (pure) in `sandy/features/builder.py` using a `cutoff_ts` computed from `min(start_time_utc)` of the target half-inning, bounding every same-game aggregate to rows strictly before `cutoff_ts` and cross-game trailing-15 aggregates to `game_date < :game_date`; handle the `game_pk=None` / `as_of` path for prediction with empty same-game history (pitches_before=0, lineup_spots=(1,2,3))
     - _Requirements: 5.1, 5.2, 5.3_
-  - [-] 8.3 Implement the features runner in `sandy/features/runner.py` iterating all Final-game innings, omitting any row where a feature is uncomputable and logging the omitted `(game_pk, team_code, inning_number)` with the missing feature name, then UPSERTing `derived.inning_features` with `feature_schema_version` stamped on every row
+  - [x] 8.3 Implement the features runner in `sandy/features/runner.py` iterating all Final-game innings, omitting any row where a feature is uncomputable and logging the omitted `(game_pk, team_code, inning_number)` with the missing feature name, then UPSERTing `derived.inning_features` with `feature_schema_version` stamped on every row
     - _Requirements: 3.4, 5.4, 5.5, 10.1, 10.2_
   - [ ]* 8.4 Write unit tests asserting feature-builder determinism (identical inputs → identical outputs) and leakage prevention (no event with `start_time_utc >= cutoff_ts` influences the result)
     - _Requirements: 5.1, 5.3_
