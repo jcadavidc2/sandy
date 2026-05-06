@@ -173,7 +173,7 @@ def build_feature_vector(
         "lineup_spot1_season_obp": batter_obps[0],
         "lineup_spot2_season_obp": batter_obps[1],
         "lineup_spot3_season_obp": batter_obps[2],
-        "is_home": int(is_home) if is_home is not None else 0,
+        "is_home": bool(is_home) if is_home is not None else False,
         "ballpark_id": ballpark_id if ballpark_id is not None else 0,
         "inning_number_feat": inning_number,
         "trailing15_rpg": trailing15_rpg if trailing15_rpg is not None else 0.0,
