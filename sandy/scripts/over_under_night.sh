@@ -54,7 +54,7 @@ cd "$PROJECT_DIR"
 
 # Step 1: Reconcile
 echo "[$(date -Iseconds)] Step 1: Reconciling outcomes..."
-if ! OUTPUT=$(sandy over-under reconcile --notify 2>&1); then
+if ! OUTPUT=$(/home/ec2-user/sandy/.venv/bin/sandy over-under reconcile --notify 2>&1); then
     EXIT_CODE=$?
     echo "[$(date -Iseconds)] Reconciliation FAILED (exit code: $EXIT_CODE)"
     echo "$OUTPUT"
@@ -67,7 +67,7 @@ echo "$OUTPUT"
 
 # Step 2: Retrain runs model
 echo "[$(date -Iseconds)] Step 2: Retraining runs model..."
-if ! OUTPUT=$(sandy train --target runs 2>&1); then
+if ! OUTPUT=$(/home/ec2-user/sandy/.venv/bin/sandy train --target runs 2>&1); then
     EXIT_CODE=$?
     echo "[$(date -Iseconds)] Retraining FAILED (exit code: $EXIT_CODE)"
     echo "$OUTPUT"
@@ -80,7 +80,7 @@ echo "$OUTPUT"
 
 # Step 3: Calibrate
 echo "[$(date -Iseconds)] Step 3: Computing calibration..."
-if ! OUTPUT=$(sandy over-under calibrate --notify 2>&1); then
+if ! OUTPUT=$(/home/ec2-user/sandy/.venv/bin/sandy over-under calibrate --notify 2>&1); then
     EXIT_CODE=$?
     echo "[$(date -Iseconds)] Calibration FAILED (exit code: $EXIT_CODE)"
     echo "$OUTPUT"

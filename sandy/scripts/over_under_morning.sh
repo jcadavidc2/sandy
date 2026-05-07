@@ -50,7 +50,7 @@ echo "=========================================="
 
 cd "$PROJECT_DIR"
 
-if OUTPUT=$(sandy over-under predict --notify 2>&1); then
+if OUTPUT=$(/home/ec2-user/sandy/.venv/bin/sandy over-under predict --notify 2>&1); then
     echo "[$(date -Iseconds)] Morning predictions complete"
     echo "$OUTPUT"
 else

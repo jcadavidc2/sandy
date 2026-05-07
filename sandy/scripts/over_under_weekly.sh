@@ -49,7 +49,7 @@ echo "=========================================="
 
 cd "$PROJECT_DIR"
 
-if OUTPUT=$(sandy over-under calibrate --notify --weekly 2>&1); then
+if OUTPUT=$(/home/ec2-user/sandy/.venv/bin/sandy over-under calibrate --notify --weekly 2>&1); then
     echo "[$(date -Iseconds)] Weekly analysis complete"
     echo "$OUTPUT"
 else

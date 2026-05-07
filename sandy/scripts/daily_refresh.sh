@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sandy daily refresh script with Telegram notifications.
 #
-# Runs `sandy refresh` and sends a Telegram notification on success or failure.
+# Runs `/home/ec2-user/sandy/.venv/bin/sandy refresh` and sends a Telegram notification on success or failure.
 #
 # Required environment variables:
 #   TELEGRAM_BOT_TOKEN - Telegram bot API token
@@ -65,7 +65,7 @@ cd "$PROJECT_DIR"
 
 # Run the refresh command and capture output
 REFRESH_OUTPUT=""
-if REFRESH_OUTPUT=$(sandy refresh 2>&1); then
+if REFRESH_OUTPUT=$(/home/ec2-user/sandy/.venv/bin/sandy refresh 2>&1); then
     # Extract stats from output
     GAMES_ADDED=$(echo "$REFRESH_OUTPUT" | grep -oP '\d+ added' | head -1 | grep -oP '\d+' || echo "0")
     LABELS_COUNT=$(echo "$REFRESH_OUTPUT" | grep -oP '\d+ labels' | head -1 | grep -oP '\d+' || echo "0")
