@@ -116,7 +116,7 @@ Bottom-up implementation of the daily over/under prediction → reconciliation �
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 9. Notifier module
-  - [ ] 9.1 Create `sandy/over_under/notifier.py`
+  - [x] 9.1 Create `sandy/over_under/notifier.py`
     - Implement `format_morning_digest(predictions, calibration)` with trust signal and per-game lines sorted by game_time_utc ascending
     - Implement `format_nightly_report(outcomes, calibration, retraining)` with correct/total header, per-game lines with ✅/❌ and top-3 features, calibration one-liner, retraining result
     - Implement `format_no_games_message()` returning "No games scheduled today — no over/under predictions."
