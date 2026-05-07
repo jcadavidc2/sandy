@@ -182,14 +182,14 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 13. Cron scripts
-  - [ ] 13.1 Create `sandy/scripts/over_under_morning.sh`
+  - [x] 13.1 Create `sandy/scripts/over_under_morning.sh`
     - Source env vars from `~/.sandy_env` and `.env`
     - Activate venv
     - Run `sandy over-under predict --notify`
     - On failure: send Telegram error alert with last 5 lines of stderr
     - _Requirements: 10.1, 10.5_
 
-  - [ ] 13.2 Create `sandy/scripts/over_under_night.sh`
+  - [x] 13.2 Create `sandy/scripts/over_under_night.sh`
     - Source env vars, activate venv
     - Run `sandy over-under reconcile --notify`
     - Run `sandy train --target runs` (daily retraining)
@@ -197,13 +197,13 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
     - On failure at any step: send Telegram error alert
     - _Requirements: 10.2, 10.5_
 
-  - [ ] 13.3 Create `sandy/scripts/over_under_weekly.sh`
+  - [x] 13.3 Create `sandy/scripts/over_under_weekly.sh`
     - Source env vars, activate venv
     - Run `sandy over-under calibrate --notify --weekly` (deeper EDA with rolling 4-week trends)
     - On failure: send Telegram error alert
     - _Requirements: 10.3, 10.5_
 
-  - [ ] 13.4 Update `sandy/scripts/crontab.txt`
+  - [x] 13.4 Update `sandy/scripts/crontab.txt`
     - Add morning job at 7:00 AM UTC daily
     - Add nightly job at 11:00 PM UTC daily
     - Add weekly deeper analysis at 11:30 PM UTC on Sundays
