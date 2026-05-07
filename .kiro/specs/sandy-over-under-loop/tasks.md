@@ -97,7 +97,7 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
     - **Validates: Requirements 7.1, 7.3**
 
 - [ ] 7. Retrainer module
-  - [ ] 7.1 Create `sandy/over_under/retrainer.py`
+  - [x] 7.1 Create `sandy/over_under/retrainer.py`
     - Implement `retrain_runs_model(config)` that calls existing `train_runs_model()` from `sandy.train.trainer`
     - Load current artifact's validation MAE for comparison
     - If new_mae > previous_mae * 1.2, do NOT overwrite artifact (guard condition), return RetrainingResult with skipped_reason
