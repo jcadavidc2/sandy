@@ -176,7 +176,7 @@ The feature builds on the existing `predict_game` / `runs` model, `derived.predi
 1. THE system SHALL provide a `sandy/scripts/over_under_morning.sh` script that runs the morning prediction batch and sends the Telegram digest, callable standalone or from cron.
 2. THE system SHALL provide a `sandy/scripts/over_under_night.sh` script that runs nightly reconciliation and sends the Telegram report, callable standalone or from cron.
 3. THE system SHALL provide a `sandy/scripts/over_under_weekly.sh` script that runs calibration analysis and model retraining, callable standalone or from cron.
-4. THE system SHALL update `sandy/scripts/crontab.txt` with three new entries: morning job at 6:05 AM UTC daily, nightly job at 11:00 PM UTC daily (reconcile + calibrate + retrain), weekly deeper analysis at 11:30 PM UTC on Sundays (covariate EDA report).
+4. THE system SHALL update `sandy/scripts/crontab.txt` with three new entries: morning job at 7:00 AM UTC daily (1 hour after data refresh ensures fresh data), nightly job at 11:00 PM UTC daily (reconcile + calibrate + retrain), weekly deeper analysis at 11:30 PM UTC on Sundays (covariate EDA report).
 5. WHEN any of the three scripts fails, THE Telegram_Notifier SHALL send an error alert with the script name and the last 5 lines of stderr.
 
 ---
