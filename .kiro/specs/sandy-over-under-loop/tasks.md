@@ -6,8 +6,8 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
 
 ## Tasks
 
-- [ ] 1. Database migration and schema setup
-  - [ ] 1.1 Create migration file `sandy/migrations/add_over_under_tables.sql`
+- [x] 1. Database migration and schema setup
+  - [x] 1.1 Create migration file `sandy/migrations/add_over_under_tables.sql`
     - Create `derived.over_under_outcomes` table with all columns from design (game_pk, game_date, team codes, 7 probability columns, feature_vector JSONB, covariate columns, 7 actual_over columns, 7 was_correct columns, outcome_filled_at_utc)
     - Add UNIQUE constraint on (game_pk, game_date)
     - Create `derived.calibration_snapshots` table (snapshot_date, threshold, accuracy, sample_size, recommended_threshold, covariate_insights JSONB, created_at_utc)

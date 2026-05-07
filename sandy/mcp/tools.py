@@ -160,6 +160,39 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["team_code"],
         },
     },
+    {
+        "name": "get_daily_over_under_predictions",
+        "description": "Get today's (or a specific date's) over/under predictions for all MLB games, sorted by P(over 6.5) descending.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "description": "Date in YYYY-MM-DD format (default: today)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_over_under_report",
+        "description": "Get reconciled over/under outcomes for a date with accuracy summary. Shows which predictions were correct/incorrect.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "description": "Date in YYYY-MM-DD format (default: yesterday)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_over_under_calibration",
+        "description": "Get the latest over/under calibration snapshot showing accuracy per threshold and recommended threshold.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "weeks_back": {"type": "integer", "description": "Number of weekly snapshots to return (default: 1)"},
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -189,6 +222,15 @@ def handle_tool_call(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any
             return _handle_team_recent_games(arguments)
         elif tool_name == "query_team_stats":
             return _handle_query_team_stats(arguments)
+        elif tool_name == "get_daily_over_under_predictions":
+            from sandy.mcp.over_under_tools import handle_get_daily_over_under_predictions
+            return handle_get_daily_over_under_predictions(arguments)
+        elif tool_name == "get_over_under_report":
+            from sandy.mcp.over_under_tools import handle_get_over_under_report
+            return handle_get_over_under_report(arguments)
+        elif tool_name == "get_over_under_calibration":
+            from sandy.mcp.over_under_tools import handle_get_over_under_calibration
+            return handle_get_over_under_calibration(arguments)
         else:
             return {"error": f"Unknown tool: {tool_name}"}
     except Exception as exc:

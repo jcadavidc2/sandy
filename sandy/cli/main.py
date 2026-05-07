@@ -80,6 +80,7 @@ from sandy.cli.predict_cmd import predict_cmd  # noqa: E402
 from sandy.cli.today_cmd import today  # noqa: E402
 from sandy.cli.predict_all_cmd import predict_all  # noqa: E402
 from sandy.cli.refresh_cmd import refresh  # noqa: E402
+from sandy.cli.over_under_cmd import over_under  # noqa: E402
 
 cli.add_command(ingest)
 cli.add_command(labels)
@@ -89,6 +90,7 @@ cli.add_command(predict_cmd, name="predict")
 cli.add_command(today)
 cli.add_command(predict_all)
 cli.add_command(refresh)
+cli.add_command(over_under)
 
 
 if __name__ == "__main__":  # pragma: no cover

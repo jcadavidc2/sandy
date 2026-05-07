@@ -1,6 +1,4 @@
-# Sandy daily refresh cron job
-# Runs at 6:00 AM UTC every day (before most MLB games start)
-#
+# Sandy cron jobs
 # Install with:
 #   crontab sandy/scripts/crontab.txt
 #
@@ -17,3 +15,12 @@ PATH=/usr/local/bin:/usr/bin:/bin:/home/ec2-user/.local/bin
 
 # Daily refresh at 6 AM UTC
 0 6 * * * /home/ec2-user/sandy/scripts/daily_refresh.sh >> /home/ec2-user/sandy/logs/cron.log 2>&1
+
+# Over/under morning predictions at 7 AM UTC (after daily refresh ensures fresh data)
+0 7 * * * /home/ec2-user/sandy/scripts/over_under_morning.sh >> /home/ec2-user/sandy/logs/over_under.log 2>&1
+
+# Over/under nightly reconciliation + retraining + calibration at 11 PM UTC
+0 23 * * * /home/ec2-user/sandy/scripts/over_under_night.sh >> /home/ec2-user/sandy/logs/over_under.log 2>&1
+
+# Over/under weekly deeper covariate analysis at 11:30 PM UTC on Sundays
+30 23 * * 0 /home/ec2-user/sandy/scripts/over_under_weekly.sh >> /home/ec2-user/sandy/logs/over_under.log 2>&1
