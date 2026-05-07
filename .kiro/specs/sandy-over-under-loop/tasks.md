@@ -147,7 +147,7 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
     - **Validates: Requirements 5.4**
 
 - [ ] 10. CLI commands
-  - [ ] 10.1 Create `sandy/cli/over_under_cmd.py`
+  - [x] 10.1 Create `sandy/cli/over_under_cmd.py`
     - Implement Click group `over-under` with three subcommands: `predict`, `reconcile`, `calibrate`
     - `predict --date --notify`: run predict_all_games, persist, optionally send morning digest
     - `reconcile --date --notify`: run reconcile_over_under, optionally send nightly report
@@ -155,18 +155,18 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
     - Print results to stdout in all cases
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5_
 
-  - [ ] 10.2 Register `over-under` group in `sandy/cli/main.py`
+  - [x] 10.2 Register `over-under` group in `sandy/cli/main.py`
     - Import over_under_cmd and add to cli group
     - _Requirements: 11.1_
 
 - [ ] 11. MCP tools
-  - [ ] 11.1 Create `sandy/mcp/over_under_tools.py`
+  - [x] 11.1 Create `sandy/mcp/over_under_tools.py`
     - Implement `handle_get_daily_over_under_predictions(args)`: query today's (or specified date's) predictions, return sorted descending by p_over_6_5
     - Implement `handle_get_over_under_report(args)`: return reconciled outcomes for yesterday (or specified date) with summary {correct, total, accuracy}
     - Implement `handle_get_over_under_calibration(args)`: return latest calibration snapshot with optional weeks_back history
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 5.1, 5.2, 5.3, 5.4, 5.5, 7.6, 9.1, 9.2_
 
-  - [ ] 11.2 Register new tools in `sandy/mcp/tools.py`
+  - [x] 11.2 Register new tools in `sandy/mcp/tools.py`
     - Add 3 new tool definitions to TOOL_DEFINITIONS list (get_daily_over_under_predictions, get_over_under_report, get_over_under_calibration)
     - Add dispatch cases in handle_tool_call
     - _Requirements: 2.1, 5.1, 7.6_
