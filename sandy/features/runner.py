@@ -126,10 +126,16 @@ def _get_innings_to_process(
             {"game_pk": game_pk},
         ).fetchall()
     else:
+        # Only process innings that don't already have features (incremental)
         rows = conn.execute(
             text("""
                 SELECT il.game_pk, il.team_code, il.inning_number
                 FROM derived.inning_labels il
+                LEFT JOIN derived.inning_features f
+                    ON f.game_pk = il.game_pk
+                    AND f.team_code = il.team_code
+                    AND f.inning_number = il.inning_number
+                WHERE f.game_pk IS NULL
                 ORDER BY il.game_pk, il.team_code, il.inning_number
             """)
         ).fetchall()
@@ -387,13 +393,17 @@ def _get_games_for_game_features(
             {"game_pk": game_pk},
         ).fetchall()
     else:
+        # Only process games that don't already have game features (incremental)
         rows = conn.execute(
             text("""
-                SELECT game_pk, game_date, home_team_code, away_team_code,
-                       home_starter_id, away_starter_id, venue_id
-                FROM raw.games
-                WHERE status = 'Final' AND game_type = 'R'
-                ORDER BY game_date, game_pk
+                SELECT g.game_pk, g.game_date, g.home_team_code, g.away_team_code,
+                       g.home_starter_id, g.away_starter_id, g.venue_id
+                FROM raw.games g
+                LEFT JOIN derived.game_features f
+                    ON f.game_pk = g.game_pk AND f.team_code = g.home_team_code
+                WHERE g.status = 'Final' AND g.game_type = 'R'
+                  AND f.game_pk IS NULL
+                ORDER BY g.game_date, g.game_pk
             """)
         ).fetchall()
     return [
