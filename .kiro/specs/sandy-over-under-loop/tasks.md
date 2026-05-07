@@ -23,7 +23,7 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
     - _Requirements: 1.1, 1.2, 7.1, 8.1_
 
 - [ ] 3. Predictor module
-  - [ ] 3.1 Create `sandy/over_under/predictor.py`
+  - [x] 3.1 Create `sandy/over_under/predictor.py`
     - Implement `compute_over_under_probabilities(total_expected_runs, residual_std=2.8)` using `scipy.stats.norm.cdf` for all 7 thresholds
     - Implement `predict_all_games(config, game_date=None)` that calls `predict_game(target="runs")` for each team, sums expected runs, applies normal approximation
     - Handle pitcher fallback: use team season ERA when no probable pitcher announced, set `pitcher_fallback=True`
@@ -54,7 +54,7 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 5. Reconciler module
-  - [ ] 5.1 Create `sandy/over_under/reconciler.py`
+  - [x] 5.1 Create `sandy/over_under/reconciler.py`
     - Implement `reconcile_over_under(engine)` that queries Final games with NULL actual_total_runs in `derived.over_under_outcomes`
     - Compute actual_total_runs = home_score + away_score from `raw.games`
     - Compute actual_over_T = actual_total_runs > T for all 7 thresholds
@@ -78,7 +78,7 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
     - **Validates: Requirements 3.4**
 
 - [ ] 6. Calibrator module
-  - [ ] 6.1 Create `sandy/over_under/calibrator.py`
+  - [x] 6.1 Create `sandy/over_under/calibrator.py`
     - Implement `compute_calibration(engine, lookback_days=7)` that queries reconciled outcomes from past N days
     - Compute accuracy at each threshold T = count(was_correct_T == True) / sample_size
     - Identify recommended_threshold as T with highest accuracy
