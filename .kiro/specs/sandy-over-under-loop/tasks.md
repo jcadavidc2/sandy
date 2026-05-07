@@ -14,8 +14,8 @@ Bottom-up implementation of the daily over/under prediction â†’ reconciliation â
     - Use `CREATE TABLE IF NOT EXISTS` for idempotency
     - _Requirements: 12.1, 12.2, 12.3, 12.4_
 
-- [ ] 2. Domain dataclasses and schemas
-  - [ ] 2.1 Create `sandy/over_under/__init__.py` and `sandy/over_under/schemas.py`
+- [x] 2. Domain dataclasses and schemas
+  - [x] 2.1 Create `sandy/over_under/__init__.py` and `sandy/over_under/schemas.py`
     - Define `OverUnderPrediction` frozen dataclass (game_pk, game_date, home_team_code, away_team_code, game_time_utc, predicted_at_utc, p_over dict, feature_vector dict, covariate fields, pitcher_fallback)
     - Define `CalibrationSnapshot` frozen dataclass (snapshot_date, accuracy_by_threshold dict, recommended_threshold, sample_size, covariate_insights dict, rolling_4w_accuracy)
     - Define `RetrainingResult` frozen dataclass (success, sample_size, new_mae, previous_mae, skipped_reason)
