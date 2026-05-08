@@ -62,7 +62,7 @@ def format_morning_digest(
         fallback_marker = " (fallback)" if pred.pitcher_fallback else ""
         lines.append(
             f"{pred.home_team_code} vs {pred.away_team_code}  "
-            f"O5.5={p_over_5_5:.0%} | O6.5={p_over_6_5:.0%}  "
+            f"O5.5={p_over_5_5:.1%} | O6.5={p_over_6_5:.1%}  "
             f"⏰ {game_time_str}{fallback_marker}"
         )
 
