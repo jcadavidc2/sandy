@@ -38,12 +38,26 @@ def format_morning_digest(
 
     # Trust signal from calibration
     if calibration is not None:
-        acc_6_5 = calibration.accuracy_by_threshold.get(6.5, 0.0)
-        rec_t = calibration.recommended_threshold
-        lines.append(
-            f"📊 Based on last 7 days: predictions above 70% have been "
-            f"{acc_6_5:.0%} accurate. Recommended threshold: {rec_t}."
-        )
+        prob_thresholds = calibration.covariate_insights.get("probability_thresholds", {})
+
+        # Build trust signal from the best findings
+        trust_lines = []
+        for t_str in ["5.5", "6.5"]:
+            t_data = prob_thresholds.get(t_str, {})
+            if t_data and not t_data.get("insufficient_data"):
+                best_prob = t_data.get("best_prob_cutoff", 0.5)
+                best_acc = t_data.get("accuracy_at_cutoff", 0.0)
+                best_games = t_data.get("games_at_cutoff", 0)
+                if best_games >= 3:
+                    trust_lines.append(
+                        f"O{t_str} at {best_prob:.0%}+ → {best_acc:.0%} accuracy ({best_games} games)"
+                    )
+
+        if trust_lines:
+            lines.append("📊 Best picks this week: " + " | ".join(trust_lines))
+        else:
+            acc_6_5 = calibration.accuracy_by_threshold.get(6.5, 0.0)
+            lines.append(f"📊 Overall 6.5 accuracy: {acc_6_5:.0%} (7-day)")
     else:
         lines.append("📊 Not enough history yet for calibration signal.")
 
