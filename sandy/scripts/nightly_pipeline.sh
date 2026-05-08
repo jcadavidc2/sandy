@@ -45,10 +45,13 @@ echo "=========================================="
 
 # Step 1: Ingest new games
 echo "[$(date -Iseconds)] Step 1/7: Ingesting new games..."
-if ! $SANDY ingest incremental 2>&1; then
+if ! OUTPUT=$($SANDY ingest incremental 2>&1); then
     send_telegram "❌ Nightly pipeline failed at: ingest"
     exit 1
 fi
+echo "$OUTPUT" | tail -1
+GAMES_ADDED=$(echo "$OUTPUT" | grep -oP '\d+ added' | grep -oP '\d+' || echo "0")
+send_telegram "✅ Data updated: ${GAMES_ADDED} new games ingested, labels and features rebuilding..."
 
 # Step 2: Build labels (all targets)
 echo "[$(date -Iseconds)] Step 2/7: Building labels..."
@@ -62,22 +65,25 @@ $SANDY features build --target game_winner 2>&1 | tail -1
 
 # Step 4: Reconcile over/under
 echo "[$(date -Iseconds)] Step 4/7: Reconciling over/under outcomes..."
-$SANDY over-under reconcile 2>&1 | tail -1
+RECONCILE_OUTPUT=$($SANDY over-under reconcile --notify 2>&1)
+echo "$RECONCILE_OUTPUT" | tail -1
 
 # Step 5: Retrain ALL models
 echo "[$(date -Iseconds)] Step 5/7: Retraining all models..."
-$SANDY train --target runs 2>&1 | tail -2
-$SANDY train --target game_winner 2>&1 | tail -2
-# Skip reached_base retrain for now (needs inning features which are slow)
-# $SANDY train --target reached_base 2>&1 | tail -2
+RUNS_OUTPUT=$($SANDY train --target runs 2>&1 | tail -2)
+GW_OUTPUT=$($SANDY train --target game_winner 2>&1 | tail -2)
+echo "$RUNS_OUTPUT"
+echo "$GW_OUTPUT"
+send_telegram "🤖 Models retrained:
+- runs: $(echo "$RUNS_OUTPUT" | grep -oP 'MAE.*' || echo 'done')
+- game_winner: $(echo "$GW_OUTPUT" | grep -oP 'AUC.*' || echo 'done')"
 
 # Step 6: Calibrate
 echo "[$(date -Iseconds)] Step 6/7: Computing calibration..."
-$SANDY over-under calibrate 2>&1 | tail -3
+$SANDY over-under calibrate --notify 2>&1 | tail -3
 
-# Step 7: Send nightly report
-echo "[$(date -Iseconds)] Step 7/7: Sending nightly report..."
-$SANDY over-under reconcile --notify 2>&1 | tail -1
+# Step 7: Done
+echo "[$(date -Iseconds)] Step 7/7: Pipeline complete"
 
 echo "=========================================="
 echo "[$(date -Iseconds)] Nightly Pipeline COMPLETE"
