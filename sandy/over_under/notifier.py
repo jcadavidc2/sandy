@@ -54,8 +54,10 @@ def format_morning_digest(
 
     for pred in sorted_preds:
         p_over_6_5 = pred.p_over.get(6.5, 0.0)
-        # Use %I:%M %p and strip leading zero for cross-platform compat
-        game_time_str = pred.game_time_utc.strftime("%I:%M %p").lstrip("0")
+        # Convert UTC to PST (UTC-7)
+        from datetime import timedelta
+        pst_time = pred.game_time_utc - timedelta(hours=7)
+        game_time_str = pst_time.strftime("%I:%M %p").lstrip("0") + " PST"
         fallback_marker = " (fallback)" if pred.pitcher_fallback else ""
         lines.append(
             f"{pred.home_team_code} vs {pred.away_team_code}  "
