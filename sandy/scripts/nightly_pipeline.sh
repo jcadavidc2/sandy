@@ -82,8 +82,13 @@ send_telegram "🤖 Models retrained:
 echo "[$(date -Iseconds)] Step 6/7: Computing calibration..."
 $SANDY over-under calibrate --notify 2>&1 | tail -3
 
-# Step 7: Done
-echo "[$(date -Iseconds)] Step 7/7: Pipeline complete"
+# Step 7: Run today's predictions with the fresh model
+echo "[$(date -Iseconds)] Step 7/7: Running today's predictions..."
+$SANDY over-under predict --notify 2>&1 | tail -3
+
+echo "=========================================="
+echo "[$(date -Iseconds)] Nightly Pipeline COMPLETE"
+echo "=========================================="
 
 echo "=========================================="
 echo "[$(date -Iseconds)] Nightly Pipeline COMPLETE"
