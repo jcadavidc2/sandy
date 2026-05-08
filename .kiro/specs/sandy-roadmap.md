@@ -151,3 +151,26 @@ Each phase's spec is written right before the phase begins, informed by what we 
 - Whether to ever expose Sandy to friends/family, and what that means for security
 - Observability stack (probably just logs + a daily summary email to start)
 - Whether to eventually open-source Sandy
+
+## Revisit: Over/Under σ (residual standard deviation) — May 2026
+
+**Current state:** Using hardcoded σ=2.8 for the normal approximation in over/under probabilities. Getting 80-100% accuracy at high probability thresholds (20 games sample).
+
+**Data analysis (May 8, 2026):**
+- Overall actual game total σ = 4.46 (much higher than 2.8)
+- By pitcher quality:
+  - Both good starters (ERA < 3.5): σ = 3.08
+  - Mixed starters (ERA 3.5-5.0): σ = 2.96
+  - Both bad starters (ERA > 5.0): σ = 3.97
+- Coors Field: σ = 5.28
+- Residual σ (predicted vs actual): 3.27
+
+**Options when revisiting:**
+1. Simple update: change 2.8 → 3.27 (data-driven single value)
+2. Condition-based: σ = 2.5 + 0.25 × avg_starter_era (scales with pitcher quality)
+3. Lookup table: good=3.1, mixed=3.0, bad=4.0, Coors=5.3
+4. Train a dedicated binary classifier (no σ needed — direct probability)
+
+**Decision:** Keep σ=2.8 for now. It's working (80-100% accuracy). Revisit after 2+ weeks of calibration data. If accuracy drops below 70%, adjust σ. The daily calibration loop will signal when it's time.
+
+**Trigger to revisit:** Calibration shows 6.5 accuracy dropping below 70% for 3+ consecutive days.
