@@ -197,7 +197,7 @@ def calibrate_cmd(ctx: click.Context, notify: bool, weekly: bool) -> None:
             "🎯 Probability Threshold Analysis:",
         ]
 
-        # Add probability threshold recommendations
+        # Add detailed probability threshold breakdown
         prob_thresholds = snapshot.covariate_insights.get("probability_thresholds", {})
         best_overall_acc = 0.0
         best_overall_line = ""
@@ -205,22 +205,33 @@ def calibrate_cmd(ctx: click.Context, notify: bool, weekly: bool) -> None:
         for t in sorted(snapshot.accuracy_by_threshold.keys()):
             t_str = str(t)
             t_data = prob_thresholds.get(t_str, {})
+            overall_acc = snapshot.accuracy_by_threshold.get(t, 0.0)
+
             if t_data.get("insufficient_data"):
-                msg_lines.append(f"  Over {t}: insufficient data")
+                msg_lines.append(f"\nOver {t}: insufficient data")
                 continue
 
             best_prob = t_data.get("best_prob_cutoff", 0.5)
             best_acc = t_data.get("accuracy_at_cutoff", 0.0)
             best_games = t_data.get("games_at_cutoff", 0)
-            overall_acc = snapshot.accuracy_by_threshold.get(t, 0.0)
+            breakdown = t_data.get("breakdown", [])
 
-            msg_lines.append(
-                f"  Over {t}: use picks above {best_prob:.0%} → {best_acc:.0%} accuracy ({best_games} games)"
-            )
+            msg_lines.append(f"\nOver {t}:")
+            msg_lines.append(f"  All predictions: {overall_acc:.0%} accuracy ({snapshot.sample_size} games)")
+
+            for entry in breakdown:
+                prob_min = entry["prob_min"]
+                acc = entry["accuracy"]
+                correct = entry["correct"]
+                total = entry["total"]
+                marker = " ← best" if prob_min == best_prob and total >= 3 else ""
+                msg_lines.append(
+                    f"  Above {prob_min:.0%} prob: {acc:.0%} accuracy ({correct}/{total}){marker}"
+                )
 
             if best_acc > best_overall_acc and best_games >= 3:
                 best_overall_acc = best_acc
-                best_overall_line = f"Over {t} at {best_prob:.0%}+ → {best_acc:.0%} accuracy"
+                best_overall_line = f"Over {t} at {best_prob:.0%}+ → {best_acc:.0%} accuracy ({best_games} games)"
 
         msg_lines.append("")
         if best_overall_line:
