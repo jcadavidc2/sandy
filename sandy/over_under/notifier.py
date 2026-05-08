@@ -54,6 +54,7 @@ def format_morning_digest(
 
     for pred in sorted_preds:
         p_over_6_5 = pred.p_over.get(6.5, 0.0)
+        p_over_5_5 = pred.p_over.get(5.5, 0.0)
         # Convert UTC to PST (UTC-7)
         from datetime import timedelta
         pst_time = pred.game_time_utc - timedelta(hours=7)
@@ -61,7 +62,7 @@ def format_morning_digest(
         fallback_marker = " (fallback)" if pred.pitcher_fallback else ""
         lines.append(
             f"{pred.home_team_code} vs {pred.away_team_code}  "
-            f"P(over 6.5) = {p_over_6_5:.0%}  "
+            f"O5.5={p_over_5_5:.0%} | O6.5={p_over_6_5:.0%}  "
             f"⏰ {game_time_str}{fallback_marker}"
         )
 
