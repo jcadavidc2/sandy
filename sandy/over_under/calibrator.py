@@ -74,8 +74,15 @@ def compute_calibration(
             accuracy_by_threshold, key=lambda t: accuracy_by_threshold[t]
         )
 
+        # Compute probability-binned accuracy for each threshold
+        # This tells us: "for over 6.5, predictions above X% have Y% accuracy"
+        probability_thresholds = _compute_probability_threshold_analysis(conn, cutoff)
+
         # Compute per-covariate miss rates (grouped by quartile)
         covariate_insights = _compute_covariate_insights(rows)
+
+        # Add probability threshold recommendations to insights
+        covariate_insights["probability_thresholds"] = probability_thresholds
 
         # Compute rolling 4-week accuracy for primary threshold (6.5)
         rolling_4w_accuracy = _compute_rolling_4w_accuracy(conn, today)
@@ -90,6 +97,81 @@ def compute_calibration(
         covariate_insights=covariate_insights,
         rolling_4w_accuracy=rolling_4w_accuracy,
     )
+
+
+def _compute_probability_threshold_analysis(
+    conn,
+    cutoff: date,
+) -> dict[str, Any]:
+    """For each over threshold, find the probability cutoff that maximizes accuracy.
+
+    Returns a dict like:
+    {
+        "5.5": {"best_prob_cutoff": 0.85, "accuracy_at_cutoff": 0.95, "games_at_cutoff": 19,
+                "breakdown": [{"prob_min": 0.70, "accuracy": 0.80, "games": 20}, ...]},
+        "6.5": {...},
+        ...
+    }
+    """
+    result: dict[str, Any] = {}
+
+    for t in STANDARD_THRESHOLDS:
+        col = _threshold_col(t)
+        p_col = f"p_over_{col}"
+        w_col = f"was_correct_{col}"
+
+        rows = conn.execute(
+            text(f"""
+                SELECT {p_col}, {w_col}
+                FROM derived.over_under_outcomes
+                WHERE actual_total_runs IS NOT NULL
+                  AND game_date >= :cutoff
+                  AND {w_col} IS NOT NULL
+                ORDER BY {p_col} DESC
+            """),
+            {"cutoff": cutoff},
+        ).fetchall()
+
+        if len(rows) < 3:
+            result[str(t)] = {"insufficient_data": True}
+            continue
+
+        # Compute accuracy at different probability cutoffs
+        prob_cutoffs = [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+        breakdown = []
+        best_cutoff = 0.50
+        best_accuracy = 0.0
+        best_games = 0
+
+        for prob_min in prob_cutoffs:
+            filtered = [(p, c) for p, c in rows if p >= prob_min]
+            if len(filtered) < 2:
+                continue
+            correct = sum(1 for _, c in filtered if c is True)
+            total = len(filtered)
+            accuracy = correct / total
+
+            breakdown.append({
+                "prob_min": prob_min,
+                "accuracy": round(accuracy, 3),
+                "correct": correct,
+                "total": total,
+            })
+
+            # Best = highest accuracy with at least 3 games
+            if accuracy >= best_accuracy and total >= 3:
+                best_accuracy = accuracy
+                best_cutoff = prob_min
+                best_games = total
+
+        result[str(t)] = {
+            "best_prob_cutoff": best_cutoff,
+            "accuracy_at_cutoff": round(best_accuracy, 3),
+            "games_at_cutoff": best_games,
+            "breakdown": breakdown,
+        }
+
+    return result
 
 
 def _compute_covariate_insights(rows: list) -> dict[str, Any]:

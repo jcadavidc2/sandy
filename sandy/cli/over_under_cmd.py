@@ -193,12 +193,42 @@ def calibrate_cmd(ctx: click.Context, notify: bool, weekly: bool) -> None:
         msg_lines = [
             f"📊 Over/Under Calibration ({'Weekly' if weekly else 'Daily'})",
             f"Sample: {snapshot.sample_size} games, Lookback: {lookback} days",
-            f"Recommended threshold: {snapshot.recommended_threshold}",
+            "",
+            "🎯 Probability Threshold Analysis:",
         ]
-        for t, acc in sorted(snapshot.accuracy_by_threshold.items()):
-            msg_lines.append(f"  {t}: {acc:.0%}")
+
+        # Add probability threshold recommendations
+        prob_thresholds = snapshot.covariate_insights.get("probability_thresholds", {})
+        best_overall_acc = 0.0
+        best_overall_line = ""
+
+        for t in sorted(snapshot.accuracy_by_threshold.keys()):
+            t_str = str(t)
+            t_data = prob_thresholds.get(t_str, {})
+            if t_data.get("insufficient_data"):
+                msg_lines.append(f"  Over {t}: insufficient data")
+                continue
+
+            best_prob = t_data.get("best_prob_cutoff", 0.5)
+            best_acc = t_data.get("accuracy_at_cutoff", 0.0)
+            best_games = t_data.get("games_at_cutoff", 0)
+            overall_acc = snapshot.accuracy_by_threshold.get(t, 0.0)
+
+            msg_lines.append(
+                f"  Over {t}: use picks above {best_prob:.0%} → {best_acc:.0%} accuracy ({best_games} games)"
+            )
+
+            if best_acc > best_overall_acc and best_games >= 3:
+                best_overall_acc = best_acc
+                best_overall_line = f"Over {t} at {best_prob:.0%}+ → {best_acc:.0%} accuracy"
+
+        msg_lines.append("")
+        if best_overall_line:
+            msg_lines.append(f"🏆 Best pick: {best_overall_line}")
+
         if snapshot.rolling_4w_accuracy is not None:
             msg_lines.append(f"Rolling 4-week (6.5): {snapshot.rolling_4w_accuracy:.0%}")
+
         send_telegram("\n".join(msg_lines))
         click.echo("Telegram notification sent.")
 
