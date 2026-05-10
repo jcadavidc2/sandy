@@ -253,7 +253,6 @@ def send_telegram(message: str) -> bool:
     data = urllib.parse.urlencode({
         "chat_id": chat_id,
         "text": message,
-        "parse_mode": "HTML",
     }).encode("utf-8")
 
     try:
