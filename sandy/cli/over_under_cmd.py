@@ -241,6 +241,34 @@ def calibrate_cmd(ctx: click.Context, notify: bool, weekly: bool) -> None:
         if snapshot.rolling_4w_accuracy is not None:
             msg_lines.append(f"Rolling 4-week (6.5): {snapshot.rolling_4w_accuracy:.0%}")
 
+        # σ Analysis section
+        sigma_analysis = snapshot.covariate_insights.get("sigma_analysis", {})
+        if sigma_analysis and not sigma_analysis.get("insufficient_data"):
+            buckets = sigma_analysis.get("buckets", {})
+            msg_lines.append("")
+            msg_lines.append("📐 σ Analysis (low σ = more predictable):")
+            if buckets:
+                msg_lines.append(
+                    f"  Buckets: low={buckets['low'][0]:.2f}–{buckets['low'][1]:.2f} | "
+                    f"mid={buckets['mid'][0]:.2f}–{buckets['mid'][1]:.2f} | "
+                    f"high={buckets['high'][0]:.2f}–{buckets['high'][1]:.2f}"
+                )
+
+            for t_str in ["5.5", "6.5", "7.5"]:
+                t_data = sigma_analysis.get(t_str, {})
+                if not t_data:
+                    continue
+                parts = []
+                for bucket_name in ["low", "mid", "high"]:
+                    b = t_data.get(bucket_name, {})
+                    acc = b.get("accuracy")
+                    games = b.get("games", 0)
+                    if acc is not None and games > 0:
+                        parts.append(f"{bucket_name}={acc:.0%}({games})")
+                    else:
+                        parts.append(f"{bucket_name}=n/a")
+                msg_lines.append(f"  O{t_str}: {' | '.join(parts)}")
+
         send_telegram("\n".join(msg_lines))
         click.echo("Telegram notification sent.")
 

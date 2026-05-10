@@ -78,11 +78,18 @@ def compute_calibration(
         # This tells us: "for over 6.5, predictions above X% have Y% accuracy"
         probability_thresholds = _compute_probability_threshold_analysis(conn, cutoff)
 
+        # Compute σ-binned accuracy for each threshold
+        # This tells us: "for over 5.5, games with low σ hit X% vs high σ hit Y%"
+        sigma_analysis = _compute_sigma_analysis(conn, cutoff)
+
         # Compute per-covariate miss rates (grouped by quartile)
         covariate_insights = _compute_covariate_insights(rows)
 
         # Add probability threshold recommendations to insights
         covariate_insights["probability_thresholds"] = probability_thresholds
+
+        # Add sigma analysis to insights
+        covariate_insights["sigma_analysis"] = sigma_analysis
 
         # Compute rolling 4-week accuracy for primary threshold (6.5)
         rolling_4w_accuracy = _compute_rolling_4w_accuracy(conn, today)
@@ -170,6 +177,111 @@ def _compute_probability_threshold_analysis(
             "games_at_cutoff": best_games,
             "breakdown": breakdown,
         }
+
+    return result
+
+
+def _compute_sigma_analysis(
+    conn,
+    cutoff: date,
+) -> dict[str, Any]:
+    """Compute accuracy by σ bucket for each over threshold.
+
+    Splits reconciled predictions into terciles based on sigma_used,
+    then computes accuracy within each bucket per threshold.
+
+    Returns:
+    {
+        "buckets": {"low": [min, boundary1], "mid": [boundary1, boundary2], "high": [boundary2, max]},
+        "5.5": {"low": {"accuracy": 0.85, "games": 15}, "mid": {...}, "high": {...}},
+        "6.5": {...},
+        ...
+    }
+    """
+    # Fetch all reconciled outcomes with sigma
+    rows = conn.execute(
+        text("""
+            SELECT
+                sigma_used,
+                p_over_5_5, was_correct_5_5,
+                p_over_6_5, was_correct_6_5,
+                p_over_7_5, was_correct_7_5,
+                p_over_8_5, was_correct_8_5,
+                p_over_9_5, was_correct_9_5,
+                p_over_10_5, was_correct_10_5,
+                p_over_11_5, was_correct_11_5
+            FROM derived.over_under_outcomes
+            WHERE actual_total_runs IS NOT NULL
+              AND game_date >= :cutoff
+              AND sigma_used IS NOT NULL
+            ORDER BY sigma_used
+        """),
+        {"cutoff": cutoff},
+    ).fetchall()
+
+    if len(rows) < 6:
+        return {"insufficient_data": True}
+
+    # Compute tercile boundaries from the data
+    sigmas = [float(r[0]) for r in rows]
+    n = len(sigmas)
+    t1_idx = n // 3
+    t2_idx = 2 * n // 3
+
+    boundary_low = sigmas[t1_idx]
+    boundary_high = sigmas[t2_idx]
+
+    # If boundaries are the same (very narrow range), use fixed offsets
+    if boundary_low == boundary_high:
+        mid = sigmas[n // 2]
+        boundary_low = mid - 0.05
+        boundary_high = mid + 0.05
+
+    buckets = {
+        "low": [round(sigmas[0], 2), round(boundary_low, 2)],
+        "mid": [round(boundary_low, 2), round(boundary_high, 2)],
+        "high": [round(boundary_high, 2), round(sigmas[-1], 2)],
+    }
+
+    result: dict[str, Any] = {"buckets": buckets}
+
+    # Column mapping: each threshold has (p_over_col_idx, was_correct_col_idx)
+    threshold_cols = {
+        "5.5": (1, 2),
+        "6.5": (3, 4),
+        "7.5": (5, 6),
+        "8.5": (7, 8),
+        "9.5": (9, 10),
+        "10.5": (11, 12),
+        "11.5": (13, 14),
+    }
+
+    for t_str, (p_idx, w_idx) in threshold_cols.items():
+        t_result: dict[str, Any] = {}
+
+        for bucket_name, (b_min, b_max) in [
+            ("low", (sigmas[0] - 0.01, boundary_low)),
+            ("mid", (boundary_low, boundary_high)),
+            ("high", (boundary_high, sigmas[-1] + 0.01)),
+        ]:
+            bucket_rows = [
+                r for r in rows
+                if float(r[0]) >= b_min and float(r[0]) <= b_max
+                and r[w_idx] is not None
+            ]
+
+            if not bucket_rows:
+                t_result[bucket_name] = {"accuracy": None, "games": 0}
+                continue
+
+            correct = sum(1 for r in bucket_rows if r[w_idx] is True)
+            total = len(bucket_rows)
+            t_result[bucket_name] = {
+                "accuracy": round(correct / total, 3) if total > 0 else None,
+                "games": total,
+            }
+
+        result[t_str] = t_result
 
     return result
 
