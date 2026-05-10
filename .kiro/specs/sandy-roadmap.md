@@ -152,9 +152,9 @@ Each phase's spec is written right before the phase begins, informed by what we 
 - Observability stack (probably just logs + a daily summary email to start)
 - Whether to eventually open-source Sandy
 
-## Revisit: Over/Under σ (residual standard deviation) — May 2026
+## Over/Under σ (residual standard deviation) — RESOLVED May 2026
 
-**Current state:** Using hardcoded σ=2.8 for the normal approximation in over/under probabilities. Getting 80-100% accuracy at high probability thresholds (20 games sample).
+**History:** Originally used hardcoded σ=2.8. Accuracy at high probability thresholds started declining (May 7-8, 2026).
 
 **Data analysis (May 8, 2026):**
 - Overall actual game total σ = 4.46 (much higher than 2.8)
@@ -165,12 +165,15 @@ Each phase's spec is written right before the phase begins, informed by what we 
 - Coors Field: σ = 5.28
 - Residual σ (predicted vs actual): 3.27
 
-**Options when revisiting:**
-1. Simple update: change 2.8 → 3.27 (data-driven single value)
-2. Condition-based: σ = 2.5 + 0.25 × avg_starter_era (scales with pitcher quality)
-3. Lookup table: good=3.1, mixed=3.0, bad=4.0, Coors=5.3
-4. Train a dedicated binary classifier (no σ needed — direct probability)
+**Solution implemented (May 9, 2026): Matchup-specific volatility model**
+- LightGBM regression model trained on |actual_total - predicted_total| per game
+- Uses the same 10 game features as the runs model (starter ERA/WHIP, trailing RPG, OBP, ballpark, is_home)
+- Predicts a per-game σ (clamped to [1.0, 8.0]) instead of using a single hardcoded value
+- Fallback: σ=3.3 (data-driven average) when model artifact not available
+- Training metrics: MAE=2.14, mean_residual=3.5
+- Observed range in production: σ ≈ 3.39–3.58 (varies by matchup quality)
+- Model retrained nightly alongside runs/game_winner models
+- DB columns added: `home_expected_runs`, `away_expected_runs`, `sigma_used`
+- Code: `sandy/over_under/volatility.py`
 
-**Decision:** Keep σ=2.8 for now. It's working (80-100% accuracy). Revisit after 2+ weeks of calibration data. If accuracy drops below 70%, adjust σ. The daily calibration loop will signal when it's time.
-
-**Trigger to revisit:** Calibration shows 6.5 accuracy dropping below 70% for 3+ consecutive days.
+**Monitoring:** If calibration shows 6.5 accuracy < 70% for 3+ consecutive days, investigate whether the volatility model needs hyperparameter tuning or additional features.
