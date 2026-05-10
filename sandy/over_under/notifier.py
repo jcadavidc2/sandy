@@ -74,13 +74,20 @@ def format_morning_digest(
         pst_time = pred.game_time_utc - timedelta(hours=7)
         game_time_str = pst_time.strftime("%I:%M %p").lstrip("0") + " PST"
         fallback_marker = " (fallback)" if pred.pitcher_fallback else ""
+        sigma_str = f"σ={pred.sigma_used:.2f}" if pred.sigma_used else ""
         lines.append(
             f"{pred.home_team_code} vs {pred.away_team_code}  "
             f"O5.5={p_over_5_5:.1%} | O6.5={p_over_6_5:.1%}  "
-            f"⏰ {game_time_str}{fallback_marker}"
+            f"{sigma_str}  ⏰ {game_time_str}{fallback_marker}"
         )
 
     lines.append(f"\n({len(predictions)} games total)")
+
+    # Sigma summary
+    sigmas = [p.sigma_used for p in predictions if p.sigma_used]
+    if sigmas:
+        lines.append(f"σ range: {min(sigmas):.2f}–{max(sigmas):.2f} (matchup-specific)")
+
     return "\n".join(lines)
 
 
