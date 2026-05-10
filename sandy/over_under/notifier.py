@@ -58,6 +58,22 @@ def format_morning_digest(
         else:
             acc_6_5 = calibration.accuracy_by_threshold.get(6.5, 0.0)
             lines.append(f"📊 Overall 6.5 accuracy: {acc_6_5:.0%} (7-day)")
+
+        # σ edge: show low-σ accuracy if available
+        sigma_analysis = calibration.covariate_insights.get("sigma_analysis", {})
+        if sigma_analysis and not sigma_analysis.get("insufficient_data"):
+            buckets = sigma_analysis.get("buckets", {})
+            low_bucket = buckets.get("low", [])
+            sigma_edge_parts = []
+            for t_str in ["5.5", "6.5"]:
+                t_data = sigma_analysis.get(t_str, {})
+                low_data = t_data.get("low", {})
+                if low_data and low_data.get("accuracy") is not None and low_data.get("games", 0) >= 3:
+                    acc = low_data["accuracy"]
+                    games = low_data["games"]
+                    sigma_edge_parts.append(f"O{t_str} with σ<{low_bucket[1]:.2f} → {acc:.0%} ({games} games)")
+            if sigma_edge_parts:
+                lines.append("📐 Low σ edge: " + " | ".join(sigma_edge_parts))
     else:
         lines.append("📊 Not enough history yet for calibration signal.")
 
