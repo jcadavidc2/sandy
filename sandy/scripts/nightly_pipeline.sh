@@ -74,9 +74,15 @@ RUNS_OUTPUT=$($SANDY train --target runs 2>&1 | tail -2)
 GW_OUTPUT=$($SANDY train --target game_winner 2>&1 | tail -2)
 echo "$RUNS_OUTPUT"
 echo "$GW_OUTPUT"
+
+# Train volatility model
+VOL_OUTPUT=$($SANDY train --target volatility 2>&1 | tail -2)
+echo "$VOL_OUTPUT"
+
 send_telegram "🤖 Models retrained:
 - runs: $(echo "$RUNS_OUTPUT" | grep -oP 'MAE.*' || echo 'done')
-- game_winner: $(echo "$GW_OUTPUT" | grep -oP 'AUC.*' || echo 'done')"
+- game_winner: $(echo "$GW_OUTPUT" | grep -oP 'AUC.*' || echo 'done')
+- volatility: $(echo "$VOL_OUTPUT" | grep -oP 'MAE.*' || echo 'done')"
 
 # Step 6: Calibrate
 echo "[$(date -Iseconds)] Step 6/7: Computing calibration..."

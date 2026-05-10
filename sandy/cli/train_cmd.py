@@ -24,7 +24,7 @@ from sandy.train.trainer import TrainingQualityError, train_model
 @click.option("--output", type=click.Path(), default=None, help="Output path for model artifact")
 @click.option(
     "--target",
-    type=click.Choice(["reached_base", "game_winner", "runs"], case_sensitive=False),
+    type=click.Choice(["reached_base", "game_winner", "runs", "volatility"], case_sensitive=False),
     default="reached_base",
     help="Training target (default: reached_base)",
 )
@@ -101,6 +101,24 @@ def train(ctx: click.Context, seed: int, output: str | None, target: str) -> Non
         click.echo(
             f"Model saved to {output_path}\n"
             f"  Target: runs\n"
+            f"  Training window: {artifact.training_window_start} to {artifact.training_window_end}\n"
+            f"  Features: {len(artifact.feature_names)} (schema v{artifact.feature_schema_version})"
+        )
+
+    elif target == "volatility":
+        from sandy.over_under.volatility import train_volatility_model
+
+        output_path = Path(output) if output else cfg.model.artifact_path("volatility")
+        try:
+            artifact = train_volatility_model(cfg, seed=seed)
+        except ValueError as exc:
+            click.echo(f"Training failed: {exc}", err=True)
+            sys.exit(1)
+
+        save_artifact(artifact, output_path)
+        click.echo(
+            f"Model saved to {output_path}\n"
+            f"  Target: volatility\n"
             f"  Training window: {artifact.training_window_start} to {artifact.training_window_end}\n"
             f"  Features: {len(artifact.feature_names)} (schema v{artifact.feature_schema_version})"
         )

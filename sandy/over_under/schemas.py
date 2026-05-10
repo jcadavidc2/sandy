@@ -32,6 +32,9 @@ class OverUnderPrediction:
     home_trailing15_rpg: float | None
     away_trailing15_rpg: float | None
     pitcher_fallback: bool
+    home_expected_runs: float = 0.0
+    away_expected_runs: float = 0.0
+    sigma_used: float = 3.3
 
 
 @dataclass(frozen=True)

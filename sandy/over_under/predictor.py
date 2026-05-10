@@ -109,7 +109,12 @@ def predict_all_games(
             pitcher_fallback = True
 
         total_expected = home_runs + away_runs
-        p_over = compute_over_under_probabilities(total_expected)
+
+        # Compute matchup-specific σ using the volatility model
+        from sandy.over_under.volatility import predict_sigma
+
+        sigma = predict_sigma(feature_vector, config) if feature_vector else 3.3
+        p_over = compute_over_under_probabilities(total_expected, residual_std=sigma)
 
         # Extract feature values from the prediction results
         feature_vector: dict[str, float] = {}
@@ -191,6 +196,9 @@ def predict_all_games(
             home_trailing15_rpg=home_trailing15_rpg,
             away_trailing15_rpg=away_trailing15_rpg,
             pitcher_fallback=pitcher_fallback,
+            home_expected_runs=home_runs,
+            away_expected_runs=away_runs,
+            sigma_used=sigma,
         )
         predictions.append(prediction)
 
@@ -224,7 +232,8 @@ def persist_predictions(engine: Engine, predictions: list[OverUnderPrediction]) 
                         feature_vector,
                         home_starter_era, away_starter_era, ballpark_id,
                         home_trailing15_rpg, away_trailing15_rpg,
-                        pitcher_fallback
+                        pitcher_fallback,
+                        home_expected_runs, away_expected_runs, sigma_used
                     ) VALUES (
                         :game_pk, :game_date, :home_team_code, :away_team_code,
                         :predicted_at_utc,
@@ -233,7 +242,8 @@ def persist_predictions(engine: Engine, predictions: list[OverUnderPrediction]) 
                         :feature_vector,
                         :home_starter_era, :away_starter_era, :ballpark_id,
                         :home_trailing15_rpg, :away_trailing15_rpg,
-                        :pitcher_fallback
+                        :pitcher_fallback,
+                        :home_expected_runs, :away_expected_runs, :sigma_used
                     )
                     ON CONFLICT (game_pk, game_date) DO UPDATE SET
                         predicted_at_utc = EXCLUDED.predicted_at_utc,
@@ -250,7 +260,10 @@ def persist_predictions(engine: Engine, predictions: list[OverUnderPrediction]) 
                         ballpark_id = EXCLUDED.ballpark_id,
                         home_trailing15_rpg = EXCLUDED.home_trailing15_rpg,
                         away_trailing15_rpg = EXCLUDED.away_trailing15_rpg,
-                        pitcher_fallback = EXCLUDED.pitcher_fallback
+                        pitcher_fallback = EXCLUDED.pitcher_fallback,
+                        home_expected_runs = EXCLUDED.home_expected_runs,
+                        away_expected_runs = EXCLUDED.away_expected_runs,
+                        sigma_used = EXCLUDED.sigma_used
                 """),
                 {
                     "game_pk": pred.game_pk,
@@ -272,6 +285,9 @@ def persist_predictions(engine: Engine, predictions: list[OverUnderPrediction]) 
                     "home_trailing15_rpg": pred.home_trailing15_rpg,
                     "away_trailing15_rpg": pred.away_trailing15_rpg,
                     "pitcher_fallback": pred.pitcher_fallback,
+                    "home_expected_runs": pred.home_expected_runs,
+                    "away_expected_runs": pred.away_expected_runs,
+                    "sigma_used": pred.sigma_used,
                 },
             )
             count += 1
