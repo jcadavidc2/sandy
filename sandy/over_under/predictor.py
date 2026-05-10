@@ -110,12 +110,6 @@ def predict_all_games(
 
         total_expected = home_runs + away_runs
 
-        # Compute matchup-specific σ using the volatility model
-        from sandy.over_under.volatility import predict_sigma
-
-        sigma = predict_sigma(feature_vector, config) if feature_vector else 3.3
-        p_over = compute_over_under_probabilities(total_expected, residual_std=sigma)
-
         # Extract feature values from the prediction results
         feature_vector: dict[str, float] = {}
         home_starter_era: float | None = None
@@ -178,6 +172,11 @@ def predict_all_games(
                 f"Failed to build feature vector for {home} vs {away}: {exc}",
                 extra={"component": "over_under.predictor"},
             )
+
+        # Compute matchup-specific σ using the volatility model (after features are built)
+        from sandy.over_under.volatility import predict_sigma
+        sigma = predict_sigma(feature_vector, config) if feature_vector else 3.3
+        p_over = compute_over_under_probabilities(total_expected, residual_std=sigma)
 
         now_utc = datetime.now(timezone.utc)
 
