@@ -67,13 +67,14 @@ def predict_cmd(ctx: click.Context, date_str: str | None, notify: bool) -> None:
     except Exception:
         pass
 
-    # Format and display
-    for pred in sorted(predictions, key=lambda p: p.game_time_utc):
+    # Format and display (sorted by O5.5 probability descending)
+    for pred in sorted(predictions, key=lambda p: p.p_over.get(5.5, 0.0), reverse=True):
+        p_5_5 = pred.p_over.get(5.5, 0.0)
         p_6_5 = pred.p_over.get(6.5, 0.0)
         fb = " (fallback)" if pred.pitcher_fallback else ""
         click.echo(
             f"  {pred.home_team_code} vs {pred.away_team_code}: "
-            f"P(over 6.5) = {p_6_5:.1%}{fb}"
+            f"O5.5={p_5_5:.1%} | O6.5={p_6_5:.1%}  σ={pred.sigma_used:.2f}{fb}"
         )
 
     if notify:

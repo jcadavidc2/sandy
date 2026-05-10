@@ -63,8 +63,8 @@ def format_morning_digest(
 
     lines.append("")
 
-    # Sort predictions by probability descending (highest confidence first)
-    sorted_preds = sorted(predictions, key=lambda p: p.p_over.get(6.5, 0.0), reverse=True)
+    # Sort predictions by probability descending (highest confidence first) — O5.5
+    sorted_preds = sorted(predictions, key=lambda p: p.p_over.get(5.5, 0.0), reverse=True)
 
     for pred in sorted_preds:
         p_over_6_5 = pred.p_over.get(6.5, 0.0)
