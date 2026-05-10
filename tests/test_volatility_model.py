@@ -364,7 +364,7 @@ class TestNotifierSigmaDisplay:
         assert "σ=3.58" in msg
 
     def test_morning_digest_includes_sigma_range(self):
-        """Morning digest should show σ range summary."""
+        """Morning digest should show σ range summary and top 3 picks."""
         from sandy.over_under.notifier import format_morning_digest
 
         predictions = [
@@ -376,6 +376,8 @@ class TestNotifierSigmaDisplay:
 
         assert "σ range: 3.39–3.58" in msg
         assert "matchup-specific" in msg
+        assert "Top 3 picks" in msg
+        assert "high prob + low σ" in msg
 
 
 # ---------------------------------------------------------------------------

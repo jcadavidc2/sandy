@@ -88,6 +88,23 @@ def format_morning_digest(
     if sigmas:
         lines.append(f"σ range: {min(sigmas):.2f}–{max(sigmas):.2f} (matchup-specific)")
 
+    # Top 3 picks: highest probability + lowest σ (confidence score = prob / σ)
+    scored = [
+        (pred, pred.p_over.get(5.5, 0.0) / pred.sigma_used if pred.sigma_used else 0.0)
+        for pred in predictions
+    ]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    top3 = scored[:3]
+    if top3:
+        lines.append("")
+        lines.append("🏅 Top 3 picks (high prob + low σ):")
+        for i, (pred, score) in enumerate(top3, 1):
+            p55 = pred.p_over.get(5.5, 0.0)
+            lines.append(
+                f"  {i}. {pred.home_team_code} vs {pred.away_team_code}  "
+                f"O5.5={p55:.1%}  σ={pred.sigma_used:.2f}"
+            )
+
     return "\n".join(lines)
 
 
