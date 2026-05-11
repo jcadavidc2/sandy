@@ -79,10 +79,15 @@ echo "$GW_OUTPUT"
 VOL_OUTPUT=$($SANDY train --target volatility 2>&1 | tail -2)
 echo "$VOL_OUTPUT"
 
+# Train meta-model (correctness predictor)
+META_OUTPUT=$($SANDY train --target meta 2>&1 | tail -2)
+echo "$META_OUTPUT"
+
 send_telegram "🤖 Models retrained:
 - runs: $(echo "$RUNS_OUTPUT" | grep -oP 'MAE.*' || echo 'done')
 - game_winner: $(echo "$GW_OUTPUT" | grep -oP 'AUC.*' || echo 'done')
-- volatility: $(echo "$VOL_OUTPUT" | grep -oP 'MAE.*' || echo 'done')"
+- volatility: $(echo "$VOL_OUTPUT" | grep -oP 'MAE.*' || echo 'done')
+- meta: $(echo "$META_OUTPUT" | grep -oP 'meta.*' || echo 'done')"
 
 # Step 6: Calibrate
 echo "[$(date -Iseconds)] Step 6/7: Computing calibration..."

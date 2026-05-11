@@ -77,8 +77,16 @@ def predict_cmd(ctx: click.Context, date_str: str | None, notify: bool) -> None:
             f"O5.5={p_5_5:.1%} | O6.5={p_6_5:.1%}  σ={pred.sigma_used:.2f}{fb}"
         )
 
+    # Score predictions with meta-model
+    meta_picks = None
+    try:
+        from sandy.over_under.meta_model import predict_correctness
+        meta_picks = predict_correctness(predictions, config) or None
+    except Exception as exc:
+        logger.debug(f"Meta-model scoring skipped: {exc}")
+
     if notify:
-        message = format_morning_digest(predictions, calibration)
+        message = format_morning_digest(predictions, calibration, meta_picks=meta_picks)
         send_telegram(message)
         click.echo("Telegram notification sent.")
 

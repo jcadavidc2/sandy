@@ -26,6 +26,7 @@ logger = get_logger("over_under.notifier")
 def format_morning_digest(
     predictions: list[OverUnderPrediction],
     calibration: CalibrationSnapshot | None,
+    meta_picks: list[dict] | None = None,
 ) -> str:
     """Format the morning Telegram message.
 
@@ -119,6 +120,20 @@ def format_morning_digest(
             lines.append(
                 f"  {i}. {pred.home_team_code} vs {pred.away_team_code}  "
                 f"O5.5={p55:.1%}  σ={pred.sigma_used:.2f}"
+            )
+
+    # Meta-model picks: P(correct) from trained classifier
+    if meta_picks:
+        lines.append("")
+        lines.append("🤖 Meta-model picks (P(correct) from 9 features):")
+        medals = ["🥇", "🥈", "🥉"]
+        for i, pick in enumerate(meta_picks):
+            marker = f" {medals[i]}" if i < 3 else ""
+            lines.append(
+                f"  {pick['home_team_code']} vs {pick['away_team_code']}  "
+                f"O5.5={pick['p_over_5_5']:.1%}  "
+                f"P(correct)={pick['p_correct']:.0%}  "
+                f"σ={pick['sigma_used']:.2f}{marker}"
             )
 
     return "\n".join(lines)
