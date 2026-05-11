@@ -177,3 +177,79 @@ Each phase's spec is written right before the phase begins, informed by what we 
 - Code: `sandy/over_under/volatility.py`
 
 **Monitoring:** If calibration shows 6.5 accuracy < 70% for 3+ consecutive days, investigate whether the volatility model needs hyperparameter tuning or additional features.
+
+## Over/Under Meta-Model (Correctness Predictor) — May 2026
+
+**Purpose:** A binary classifier that predicts P(our O5.5 prediction will be correct) for each game, using the prediction context as features. Complements the v1 threshold-based calibration with a learned model that captures feature interactions.
+
+**Model:** LightGBM binary classifier, heavily regularized (num_leaves=8, min_data_in_leaf=15, max 50 rounds, early stopping at 20).
+
+**Input features (9):**
+1. `p_over_5_5` — our predicted probability
+2. `sigma_used` — matchup-specific volatility
+3. `home_starter_era` / `away_starter_era`
+4. `home_trailing15_rpg` / `away_trailing15_rpg`
+5. `ballpark_id`
+6. `pitcher_fallback` (0/1)
+7. `total_expected_runs` (home + away expected)
+
+**Label:** `actual_over_5_5` (boolean, populated at 1 AM reconciliation)
+
+**Training data:** All reconciled games from `derived.over_under_outcomes` where `actual_over_5_5` is not null and `sigma_used` is not null. Minimum 50 games required to train.
+
+**Pipeline integration:**
+- Nightly (1 AM PST): Retrained in Step 5 alongside runs/game_winner/volatility
+- Morning (7 AM PST): Each prediction scored with P(correct), shown in Telegram
+
+**Telegram output:** Additional section at the bottom of morning predictions:
+```
+🤖 Meta-model picks (P(correct) from 9 features):
+  CLE vs LAA  O5.5=84.6%  P(correct)=91%  σ=3.44 🥇
+  TOR vs TB   O5.5=78.5%  P(correct)=87%  σ=3.43 🥈
+  HOU vs SEA  O5.5=81.1%  P(correct)=84%  σ=3.49 🥉
+  BAL vs NYY  O5.5=87.6%  P(correct)=72%  σ=3.57
+  ...
+```
+All games shown sorted by P(correct), top 3 get medals.
+
+**Current state (May 11, 2026):** Model trained on 64 games. Only 1 boosting round (data too small for more). Produces near-uniform P(correct) ≈ 78% for all games. Only feature used so far: `away_starter_era`. Expected to differentiate meaningfully at ~200+ games (2-3 weeks).
+
+**Code:** `sandy/over_under/meta_model.py`
+
+**Does NOT change:** v1 calibration, σ analysis, σ edge, game list, top 3 picks (high prob + low σ). All existing messages remain exactly as they were.
+
+## Over/Under Daily Pipeline — Current State (May 2026)
+
+**Nightly pipeline (1 AM PST / 08:00 UTC):**
+1. Ingest new games (yesterday's final scores)
+2. Build labels (reached_base, game_winner, runs)
+3. Build game features (incremental)
+4. Reconcile over/under predictions vs actuals
+5. Retrain ALL models (runs, game_winner, volatility, meta)
+6. Calibrate (v1 thresholds + σ analysis)
+7. Predict today's games + send Telegram
+
+**Morning predictions (7 AM PST / 14:00 UTC):**
+- Run predictions for today's games
+- Score with meta-model
+- Send Telegram with: trust signal, σ edge, all games (sorted by O5.5 desc), σ range, top 3 (high prob + low σ), meta-model picks
+
+**Weekly (1:30 AM PST Monday):**
+- Deeper 4-week calibration analysis
+
+**Telegram messages received daily:**
+1. ~1:02 AM: "Data updated: X new games ingested..."
+2. ~1:02 AM: Reconciliation results (yesterday's ✅/❌)
+3. ~1:03 AM: "Models retrained: runs, game_winner, volatility, meta"
+4. ~1:03 AM: Calibration report (v1 thresholds + σ analysis)
+5. ~1:04 AM: Today's predictions (full report with meta-model picks)
+6. 7:00 AM: Morning predictions (same format, fresh schedule data)
+
+**Cron schedule:**
+```
+0 8 * * *   nightly_pipeline.sh   (1 AM PST)
+0 14 * * *  over_under_morning.sh (7 AM PST)
+30 8 * * 1  over_under_weekly.sh  (1:30 AM PST Monday)
+```
+
+**Infrastructure:** EC2 t3.small, Elastic IP 3.150.16.103, PostgreSQL in docker-compose, models on disk at `/home/ec2-user/sandy/models/`.
