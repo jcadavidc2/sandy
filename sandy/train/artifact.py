@@ -122,7 +122,7 @@ def load_artifact(
     target_name = payload.get("target_name", "reached_base")
 
     # Determine expected schema version based on target
-    if target_name in ("game_winner", "runs", "volatility"):
+    if target_name in ("game_winner", "runs", "volatility", "meta_over_5_5"):
         expected_version = GAME_FEATURE_SCHEMA_VERSION
     else:
         expected_version = FEATURE_SCHEMA_VERSION
