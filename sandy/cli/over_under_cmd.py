@@ -79,14 +79,19 @@ def predict_cmd(ctx: click.Context, date_str: str | None, notify: bool) -> None:
 
     # Score predictions with meta-model
     meta_picks = None
+    meta_calibration = None
     try:
-        from sandy.over_under.meta_model import predict_correctness
+        from sandy.over_under.meta_model import calibrate_meta_threshold, predict_correctness
         meta_picks = predict_correctness(predictions, config) or None
+        if meta_picks:
+            meta_calibration = calibrate_meta_threshold(engine, config)
     except Exception as exc:
         logger.debug(f"Meta-model scoring skipped: {exc}")
 
     if notify:
-        message = format_morning_digest(predictions, calibration, meta_picks=meta_picks)
+        message = format_morning_digest(
+            predictions, calibration, meta_picks=meta_picks, meta_calibration=meta_calibration
+        )
         send_telegram(message)
         click.echo("Telegram notification sent.")
 
@@ -276,6 +281,32 @@ def calibrate_cmd(ctx: click.Context, notify: bool, weekly: bool) -> None:
                     else:
                         parts.append(f"{bucket_name}=n/a")
                 msg_lines.append(f"  O{t_str}: {' | '.join(parts)}")
+
+        # Meta-model calibration section
+        try:
+            from sandy.over_under.meta_model import calibrate_meta_threshold
+            from sandy.cli.main import _require_config
+            meta_cal = calibrate_meta_threshold(engine, config)
+            if meta_cal:
+                msg_lines.append("")
+                msg_lines.append("🤖 Meta-model calibration:")
+                for entry in meta_cal["breakdown"]:
+                    t = entry["threshold"]
+                    acc = entry["accuracy"]
+                    games = entry["games"]
+                    correct = entry["correct"]
+                    marker = " ← recommended" if t == meta_cal["recommended_threshold"] else ""
+                    msg_lines.append(
+                        f"  P(correct) ≥{t:.0%}: {acc:.0%} accuracy ({correct}/{games}){marker}"
+                    )
+                below = meta_cal["below_threshold"]
+                if below["games"] > 0:
+                    msg_lines.append(
+                        f"  P(correct) <{meta_cal['recommended_threshold']:.0%}: "
+                        f"{below['accuracy']:.0%} accuracy ({below['correct']}/{below['games']}) — avoid"
+                    )
+        except Exception:
+            pass
 
         send_telegram("\n".join(msg_lines))
         click.echo("Telegram notification sent.")

@@ -42,13 +42,13 @@ META_FEATURE_NAMES: list[str] = [
 # Minimum reconciled games required to train
 MIN_TRAINING_SAMPLES: int = 50
 
-# LightGBM hyperparameters — heavily regularized for small data
+# LightGBM hyperparameters — moderate regularization (230+ games available)
 _LGB_META_PARAMS = {
     "objective": "binary",
     "metric": "binary_logloss",
     "learning_rate": 0.05,
-    "num_leaves": 8,
-    "min_data_in_leaf": 15,
+    "num_leaves": 16,
+    "min_data_in_leaf": 8,
     "feature_fraction": 0.8,
     "bagging_fraction": 0.8,
     "bagging_freq": 5,
@@ -94,14 +94,14 @@ def train_meta_model(engine: Engine, config: Config, seed: int = 42) -> ModelArt
 
     params = {**_LGB_META_PARAMS, "seed": seed}
     callbacks = [
-        lgb.early_stopping(stopping_rounds=20, verbose=False),
+        lgb.early_stopping(stopping_rounds=30, verbose=False),
         lgb.log_evaluation(period=-1),
     ]
 
     booster = lgb.train(
         params,
         lgb_train,
-        num_boost_round=50,
+        num_boost_round=150,
         valid_sets=[lgb_val],
         callbacks=callbacks,
     )
@@ -257,8 +257,135 @@ def _extract_meta_features(pred) -> dict[str, float]:
     }
 
 
+def calibrate_meta_threshold(engine: Engine, config: Config) -> dict | None:
+    """Compute the optimal P(correct) threshold from reconciled data.
+
+    Scores all reconciled games with the current meta-model, then finds
+    the P(correct) cutoff that maximizes accuracy (with ≥ 10 games).
+
+    Returns a dict:
+    {
+        "recommended_threshold": 0.70,
+        "breakdown": [
+            {"threshold": 0.60, "accuracy": 0.73, "games": 230, "correct": 168},
+            {"threshold": 0.65, "accuracy": 0.77, "games": 200, "correct": 154},
+            ...
+        ],
+        "below_threshold": {"accuracy": 0.54, "games": 90, "correct": 49},
+    }
+
+    Returns None if meta-model is not available or insufficient data.
+    """
+    artifact_path = config.model.artifact_path("meta_over_5_5")
+
+    try:
+        artifact = load_artifact(artifact_path, expected_target="meta_over_5_5")
+    except (FileNotFoundError, Exception) as exc:
+        logger.debug(
+            f"Meta-model not available for calibration: {exc}",
+            extra={"component": "over_under.meta_model"},
+        )
+        return None
+
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT
+                p_over_5_5, sigma_used,
+                home_starter_era, away_starter_era,
+                home_trailing15_rpg, away_trailing15_rpg,
+                ballpark_id, pitcher_fallback,
+                home_expected_runs, away_expected_runs,
+                actual_over_5_5
+            FROM derived.over_under_outcomes
+            WHERE actual_over_5_5 IS NOT NULL
+              AND sigma_used IS NOT NULL
+              AND p_over_5_5 IS NOT NULL
+            ORDER BY game_date
+        """)).fetchall()
+
+    if len(rows) < 20:
+        return None
+
+    # Score each game with the meta-model
+    scored = []
+    for row in rows:
+        features = {
+            "p_over_5_5": float(row[0]),
+            "sigma_used": float(row[1]),
+            "home_starter_era": float(row[2]) if row[2] else 4.5,
+            "away_starter_era": float(row[3]) if row[3] else 4.5,
+            "home_trailing15_rpg": float(row[4]) if row[4] else 4.5,
+            "away_trailing15_rpg": float(row[5]) if row[5] else 4.5,
+            "ballpark_id": float(row[6]) if row[6] else 0,
+            "pitcher_fallback": 1 if row[7] else 0,
+            "total_expected_runs": (float(row[8]) if row[8] else 4.5) + (float(row[9]) if row[9] else 4.5),
+        }
+        feat_array = np.array(
+            [[features[n] for n in META_FEATURE_NAMES]], dtype=np.float32
+        )
+        p_correct = float(artifact.model.predict(feat_array)[0])
+        actually_correct = bool(row[10])
+        scored.append((p_correct, actually_correct))
+
+    # Compute accuracy at each threshold
+    thresholds = [0.55, 0.60, 0.65, 0.68, 0.70, 0.72, 0.75, 0.80, 0.85, 0.90]
+    breakdown = []
+    best_threshold = 0.50
+    best_accuracy = 0.0
+
+    for t in thresholds:
+        above = [s for s in scored if s[0] >= t]
+        if len(above) < 5:
+            continue
+        correct = sum(1 for _, c in above if c)
+        total = len(above)
+        accuracy = correct / total
+
+        breakdown.append({
+            "threshold": t,
+            "accuracy": round(accuracy, 3),
+            "games": total,
+            "correct": correct,
+        })
+
+        # Best = highest accuracy with at least 10 games
+        if accuracy >= best_accuracy and total >= 10:
+            best_accuracy = accuracy
+            best_threshold = t
+
+    # Compute below-threshold stats
+    below = [s for s in scored if s[0] < best_threshold]
+    below_correct = sum(1 for _, c in below if c)
+    below_stats = {
+        "accuracy": round(below_correct / len(below), 3) if below else 0.0,
+        "games": len(below),
+        "correct": below_correct,
+    }
+
+    result = {
+        "recommended_threshold": best_threshold,
+        "recommended_accuracy": round(best_accuracy, 3),
+        "breakdown": breakdown,
+        "below_threshold": below_stats,
+        "total_games": len(scored),
+    }
+
+    logger.info(
+        "Meta-model calibration complete",
+        extra={
+            "component": "over_under.meta_model",
+            "recommended_threshold": best_threshold,
+            "recommended_accuracy": round(best_accuracy, 4),
+            "total_games": len(scored),
+        },
+    )
+
+    return result
+
+
 __all__ = [
     "META_FEATURE_NAMES",
+    "calibrate_meta_threshold",
     "predict_correctness",
     "train_meta_model",
 ]

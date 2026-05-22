@@ -27,6 +27,7 @@ def format_morning_digest(
     predictions: list[OverUnderPrediction],
     calibration: CalibrationSnapshot | None,
     meta_picks: list[dict] | None = None,
+    meta_calibration: dict | None = None,
 ) -> str:
     """Format the morning Telegram message.
 
@@ -125,10 +126,31 @@ def format_morning_digest(
     # Meta-model picks: P(correct) from trained classifier
     if meta_picks:
         lines.append("")
-        lines.append("🤖 Meta-model picks (P(correct) from 9 features):")
+        # Show recommended threshold if available
+        rec_threshold = 0.70  # default
+        rec_accuracy = None
+        if meta_calibration:
+            rec_threshold = meta_calibration.get("recommended_threshold", 0.70)
+            rec_accuracy = meta_calibration.get("recommended_accuracy")
+
+        if rec_accuracy:
+            lines.append(
+                f"🤖 Meta-model picks (threshold: ≥{rec_threshold:.0%} → {rec_accuracy:.0%} accuracy):"
+            )
+        else:
+            lines.append("🤖 Meta-model picks (P(correct) from 9 features):")
+
         medals = ["🥇", "🥈", "🥉"]
-        for i, pick in enumerate(meta_picks):
-            marker = f" {medals[i]}" if i < 3 else ""
+        medal_idx = 0
+        for pick in meta_picks:
+            above_threshold = pick["p_correct"] >= rec_threshold
+            if above_threshold and medal_idx < 3:
+                marker = f" {medals[medal_idx]}"
+                medal_idx += 1
+            elif not above_threshold:
+                marker = " ⚠️"
+            else:
+                marker = ""
             lines.append(
                 f"  {pick['home_team_code']} vs {pick['away_team_code']}  "
                 f"O5.5={pick['p_over_5_5']:.1%}  "
