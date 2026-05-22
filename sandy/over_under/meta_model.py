@@ -93,17 +93,33 @@ def train_meta_model(engine: Engine, config: Config, seed: int = 42) -> ModelArt
     )
 
     params = {**_LGB_META_PARAMS, "seed": seed}
-    callbacks = [
-        lgb.early_stopping(stopping_rounds=30, verbose=False),
-        lgb.log_evaluation(period=-1),
-    ]
 
+    # Two-phase training to prevent collapsing to 1 tree:
+    # Phase 1: Train minimum 5 trees unconditionally (no early stopping)
+    # Phase 2: Continue with early stopping up to 150 total
+    # This guarantees at least 5 trees while allowing more if data supports it.
+    MIN_TREES = 5
+
+    # Phase 1: train 5 trees without early stopping
     booster = lgb.train(
         params,
         lgb_train,
-        num_boost_round=150,
+        num_boost_round=MIN_TREES,
         valid_sets=[lgb_val],
-        callbacks=callbacks,
+        callbacks=[lgb.log_evaluation(period=-1)],
+    )
+
+    # Phase 2: continue training with early stopping (up to 150 total)
+    booster = lgb.train(
+        params,
+        lgb_train,
+        num_boost_round=150 - MIN_TREES,
+        valid_sets=[lgb_val],
+        init_model=booster,
+        callbacks=[
+            lgb.early_stopping(stopping_rounds=30, verbose=False),
+            lgb.log_evaluation(period=-1),
+        ],
     )
 
     # Validation metrics
