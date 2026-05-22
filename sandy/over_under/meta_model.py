@@ -87,9 +87,9 @@ def train_meta_model(engine: Engine, config: Config, seed: int = 42) -> ModelArt
     X_val = val_df[META_FEATURE_NAMES].values.astype(np.float32)
     y_val = val_df["label"].values.astype(np.float32)
 
-    lgb_train = lgb.Dataset(X_train, label=y_train, feature_name=META_FEATURE_NAMES)
+    lgb_train = lgb.Dataset(X_train, label=y_train, feature_name=META_FEATURE_NAMES, free_raw_data=False)
     lgb_val = lgb.Dataset(
-        X_val, label=y_val, feature_name=META_FEATURE_NAMES, reference=lgb_train
+        X_val, label=y_val, feature_name=META_FEATURE_NAMES, reference=lgb_train, free_raw_data=False
     )
 
     params = {**_LGB_META_PARAMS, "seed": seed}
