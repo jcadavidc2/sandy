@@ -19,13 +19,17 @@ def local_today(cfg: Config) -> date:
     return datetime.now(ZoneInfo(cfg.football.display_timezone)).date()
 
 
-def get_today_predictions(engine: Engine, cfg: Config) -> list[dict]:
-    """Upcoming (NS) World Cup picks in our ingested window.
+def get_today_predictions(
+    engine: Engine, cfg: Config, *, for_date: date | None = None,
+) -> list[dict]:
+    """Upcoming (NS) World Cup picks for a specific local day (default: today).
 
-    We only ingest a +/-1 day window, so "all NS World Cup predictions" is the
-    next day's slate — robust across the PST/UTC midnight boundary (filtering on
-    an exact local date drops matches when the two calendars disagree).
+    ``match_date`` is stored as the user-timezone local date (fixtures are
+    ingested with the display timezone), so filtering on the local "today"
+    yields exactly today's slate — not tomorrow's, which is also NS and already
+    ingested in the +/-1 day window.
     """
+    day = for_date or local_today(cfg)
     sql = text("""
         SELECT th.name AS home, ta.name AS away,
                p.p_home_win, p.p_draw, p.p_away_win,
@@ -36,10 +40,11 @@ def get_today_predictions(engine: Engine, cfg: Config) -> list[dict]:
         JOIN football.teams th ON th.team_id = p.home_team_id
         JOIN football.teams ta ON ta.team_id = p.away_team_id
         WHERE m.status = 'NS' AND m.competition = 'World Cup'
+          AND p.match_date = :day
         ORDER BY m.kickoff_utc
     """)
     with engine.connect() as conn:
-        rows = conn.execute(sql).mappings().all()
+        rows = conn.execute(sql, {"day": day}).mappings().all()
     return [dict(r) for r in rows]
 
 
