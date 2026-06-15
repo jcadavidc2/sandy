@@ -72,12 +72,33 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class FootballConfig:
+    """Configuration for the football (World Cup) vertical.
+
+    ``api_key`` comes from the ``APIFOOTBALL_KEY`` env var. It is optional so
+    that MLB-only usage never breaks; the football client raises a clear error
+    only when an API call is actually attempted without a key.
+    """
+    api_key: str = ""
+    base_url: str = "https://v3.football.api-sports.io"
+    max_rps: float = 0.15                # ~9 req/min, under the free tier's 10/min cap
+    max_retries: int = 4
+    retry_base_delay_seconds: float = 2.0
+    min_matches_for_report: int = 5      # below this a team renders "insufficient data"
+    # Canonical day for the product. Matches are fetched and grouped in this tz
+    # so a PST evening kickoff (e.g. 19:00 PST = 02:00 UTC next day) lands on the
+    # day the user actually watched it, not the UTC date.
+    display_timezone: str = "America/Los_Angeles"
+
+
+@dataclass(frozen=True)
 class Config:
     database: DatabaseConfig
     model: ModelConfig
     ingest: IngestConfig = field(default_factory=IngestConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    football: FootballConfig = field(default_factory=FootballConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +156,7 @@ _KNOWN_SECTIONS: tuple[str, ...] = (
     "ingest",
     "training",
     "logging",
+    "football",
 )
 
 
@@ -231,6 +253,21 @@ def load_config(
     if log_env:
         working["logging"]["level"] = log_env
 
+    # Football vertical env vars (all optional).
+    _FOOTBALL_ENV_TO_FIELD = {
+        "APIFOOTBALL_KEY": "api_key",
+        "FOOTBALL_BASE_URL": "base_url",
+        "FOOTBALL_MAX_RPS": "max_rps",
+        "FOOTBALL_MAX_RETRIES": "max_retries",
+        "FOOTBALL_RETRY_BASE_DELAY_SECONDS": "retry_base_delay_seconds",
+        "FOOTBALL_MIN_MATCHES_FOR_REPORT": "min_matches_for_report",
+        "FOOTBALL_TIMEZONE": "display_timezone",
+    }
+    for env_name, field_name in _FOOTBALL_ENV_TO_FIELD.items():
+        value = os.environ.get(env_name)
+        if value:
+            working["football"][field_name] = value
+
     # ---- Layer 4: explicit CLI overrides (highest precedence) ----
     if cli_overrides:
         _apply_cli_overrides(working, cli_overrides)
@@ -276,6 +313,16 @@ def load_config(
     logging_cfg = LoggingConfig(
         **{k: v for k, v in working["logging"].items() if k in {"level"}}
     )
+    fb = working["football"]
+    football_cfg = FootballConfig(
+        api_key=str(fb.get("api_key", "")),
+        base_url=str(fb.get("base_url", "https://v3.football.api-sports.io")),
+        max_rps=float(fb.get("max_rps", 0.3)),
+        max_retries=int(fb.get("max_retries", 4)),
+        retry_base_delay_seconds=float(fb.get("retry_base_delay_seconds", 2.0)),
+        min_matches_for_report=int(fb.get("min_matches_for_report", 5)),
+        display_timezone=str(fb.get("display_timezone", "America/Los_Angeles")),
+    )
 
     return Config(
         database=database,
@@ -283,12 +330,14 @@ def load_config(
         ingest=ingest,
         training=training,
         logging=logging_cfg,
+        football=football_cfg,
     )
 
 
 __all__ = [
     "Config",
     "DatabaseConfig",
+    "FootballConfig",
     "IngestConfig",
     "LoggingConfig",
     "MissingConfigError",
