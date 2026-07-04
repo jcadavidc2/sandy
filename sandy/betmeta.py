@@ -139,8 +139,16 @@ def train_meta(league: str, config: Config | None = None) -> dict:
                   bagging_freq=1, verbose=-1, seed=42)
     booster = lgb.train(params, lgb.Dataset(train[feat_cols], label=train["_y"]),
                         num_boost_round=300)
-    hp = booster.predict(hold[feat_cols])
+    hp_raw = booster.predict(hold[feat_cols])
     hy = hold["_y"].to_numpy()
+    # ISOTONIC CALIBRATION on the chronological holdout (data the booster never saw):
+    # maps raw scores to honest probabilities, so a displayed "🤖 80%" really hits ~80%.
+    from sklearn.isotonic import IsotonicRegression
+    from sklearn.metrics import roc_auc_score
+    iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
+    iso.fit(hp_raw, hy.astype(float))
+    hp = iso.predict(hp_raw)
+    auc = round(float(roc_auc_score(hy, hp_raw)), 4)
     table = []
     for thr in THRESHOLDS:
         m = hp >= thr
@@ -151,12 +159,15 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     # holdout picks to trust the estimate).
     viable = [t for t in table if (t["n"] or 0) >= 50 and t["acc"] is not None]
     rec = max(viable, key=lambda t: t["acc"])["thr"] if viable else None
-    # Final production model uses ALL data (the holdout only sized the threshold).
-    booster_full = lgb.train(params, lgb.Dataset(X[feat_cols], label=X["_y"]),
-                             num_boost_round=300)
-    artifact = {"model_str": booster_full.model_to_string(), "features": feat_cols,
-                "threshold": rec, "eval_table": table, "trained_rows": len(X),
-                "holdout_rows": len(hold), "trained_at": date.today().isoformat()}
+    # Production = the split-trained booster + its isotonic map. (Retraining on ALL
+    # data would orphan the calibration — integrity of the 🤖 probability wins.)
+    imp = sorted(zip(feat_cols, booster.feature_importance("gain")),
+                 key=lambda x: -x[1])[:10]
+    artifact = {"model_str": booster.model_to_string(), "iso": iso, "features": feat_cols,
+                "threshold": rec, "eval_table": table, "auc": auc,
+                "importances": [(f, round(float(g), 1)) for f, g in imp],
+                "trained_rows": len(train), "holdout_rows": len(hold),
+                "trained_at": date.today().isoformat()}
     path = cfg.model.model_dir / f"{league}_meta.pkl"
     with open(path, "wb") as f:
         pickle.dump(artifact, f)
@@ -169,8 +180,9 @@ def train_meta(league: str, config: Config | None = None) -> dict:
         """), {"d": date.today(), "n": len(hold),
                "acc": next((t["acc"] for t in table if t["thr"] == rec), None) if rec else None,
                "rel": json.dumps(table), "thr": rec})
-    logger.info("%s meta trained: %s rows, holdout thr=%s table=%s", league, len(X), rec, table)
-    return {"rows": len(X), "threshold": rec, "eval_table": table}
+    logger.info("%s meta trained: auc=%s thr=%s", league, auc, rec)
+    return {"rows": len(X), "threshold": rec, "eval_table": table, "auc": auc,
+            "importances": artifact["importances"]}
 
 
 _loaded: dict = {}
@@ -188,7 +200,7 @@ def load_meta(league: str, cfg: Config):
     with open(path, "rb") as f:
         a = pickle.load(f)
     booster = lgb.Booster(model_str=a["model_str"])
-    _loaded[league] = (booster, a["features"], a["threshold"])
+    _loaded[league] = (booster, a["features"], a["threshold"], a.get("iso"))
     return _loaded[league]
 
 
@@ -197,7 +209,8 @@ def score_candidate(league: str, cfg: Config, row_dict: dict, market: str, p: fl
     loaded = load_meta(league, cfg)
     if not loaded:
         return None
-    booster, feat_cols, _thr = loaded
+    booster, feat_cols, _thr, iso = loaded
     feats = _row_features(row_dict, SPECS[league], market, p)
     X = pd.DataFrame([feats]).reindex(columns=feat_cols)
-    return float(booster.predict(X)[0])
+    raw = float(booster.predict(X)[0])
+    return float(iso.predict([raw])[0]) if iso is not None else raw

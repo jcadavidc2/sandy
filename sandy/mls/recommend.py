@@ -51,7 +51,7 @@ def meta_gate(league: str, cfg, row, candidates: list[dict]) -> list[dict]:
     loaded = load_meta(league, cfg)
     if not loaded:
         return candidates
-    _, _, thr = loaded
+    _, _, thr, _iso = loaded
     rd = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
     out = []
     for c in candidates:
