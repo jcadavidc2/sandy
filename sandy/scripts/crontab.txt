@@ -24,3 +24,8 @@ PATH=/usr/local/bin:/usr/bin:/bin:/home/ec2-user/.local/bin
 
 # Over/under weekly deeper covariate analysis at 11:30 PM UTC on Sundays
 30 23 * * 0 /home/ec2-user/sandy/scripts/over_under_weekly.sh >> /home/ec2-user/sandy/logs/over_under.log 2>&1
+
+# Sandy MLS nightly (5:30 AM PST)
+30 12 * * * /home/ec2-user/sandy/scripts/mls_nightly.sh >> /home/ec2-user/sandy/logs/mls.log 2>&1
+# Sandy NHL nightly (5:45 AM PST)
+45 12 * * * /home/ec2-user/sandy/scripts/nhl_nightly.sh >> /home/ec2-user/sandy/logs/nhl.log 2>&1
