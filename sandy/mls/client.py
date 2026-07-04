@@ -21,7 +21,8 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
-BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer/usa.1"
+BASE_TMPL = "https://site.api.espn.com/apis/site/v2/sports/{sport}/{code}"
+BASE = BASE_TMPL.format(sport="soccer", code="usa.1")  # MLS default
 MAX_RPS = 1.0
 RETRIES = 3
 
@@ -34,7 +35,12 @@ def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):  # noqa: 
 
 
 class EspnClient:
-    def __init__(self, max_rps: float = MAX_RPS, retries: int = RETRIES):
+    """League-generic ESPN client: pass code='esp.1' (soccer) or sport='basketball',
+    code='nba'. Defaults to MLS for backwards compatibility."""
+
+    def __init__(self, max_rps: float = MAX_RPS, retries: int = RETRIES,
+                 sport: str = "soccer", code: str = "usa.1"):
+        self._base = BASE_TMPL.format(sport=sport, code=code)
         self._min_interval = 1.0 / max_rps
         self._retries = retries
         self._last_call = 0.0
@@ -66,8 +72,8 @@ class EspnClient:
 
     def scoreboard(self, yyyymmdd: str) -> dict:
         """All MLS events on a calendar date (ESPN uses US/Eastern-ish day buckets)."""
-        return self._get(f"{BASE}/scoreboard?dates={yyyymmdd}")
+        return self._get(f"{self._base}/scoreboard?dates={yyyymmdd}")
 
     def summary(self, event_id: int) -> dict:
         """Match summary (boxscore team statistics incl. corners) for one event."""
-        return self._get(f"{BASE}/summary?event={event_id}")
+        return self._get(f"{self._base}/summary?event={event_id}")

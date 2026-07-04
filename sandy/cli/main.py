@@ -83,7 +83,9 @@ from sandy.cli.refresh_cmd import refresh  # noqa: E402
 from sandy.cli.over_under_cmd import over_under  # noqa: E402
 from sandy.cli.football_cmd import football
 from sandy.cli.mls_cmd import mls
-from sandy.cli.nhl_cmd import nhl  # noqa: E402
+from sandy.cli.nhl_cmd import nhl
+from sandy.cli.soccer_cmd import soccer
+from sandy.cli.nba_cmd import nba  # noqa: E402
 
 cli.add_command(ingest)
 cli.add_command(labels)
@@ -97,6 +99,8 @@ cli.add_command(over_under)
 cli.add_command(football)
 cli.add_command(mls)
 cli.add_command(nhl)
+cli.add_command(soccer)
+cli.add_command(nba)
 
 
 if __name__ == "__main__":  # pragma: no cover

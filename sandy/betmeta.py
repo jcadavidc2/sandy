@@ -49,6 +49,41 @@ SPECS = {
         "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
                       "form_points_5", "rest_days", "played_10"],
     },
+    # Multi-league soccer vertical: one meta per league, rows filtered by league.
+    **{
+        f"soccer_{lg}": {
+            "schema": "soccer", "table": "soccer.match_predictions",
+            "where": f"league = '{lg}'",
+            "markets": {
+                "double_chance": ("p_home_or_draw", "result", None),
+                "over_1_5": ("p_over_1_5", "goals", 1.5),
+                "over_2_5": ("p_over_2_5", "goals", 2.5),
+                "over_3_5": ("p_over_3_5", "goals", 3.5),
+                "over_4_5": ("p_over_4_5", "goals", 4.5),
+                "corners_over_8_5": ("p_corners_over_8_5", "corners", 8.5),
+                "corners_over_9_5": ("p_corners_over_9_5", "corners", 9.5),
+                "corners_over_10_5": ("p_corners_over_10_5", "corners", 10.5),
+                "corners_over_11_5": ("p_corners_over_11_5", "corners", 11.5),
+            },
+            "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"],
+            "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
+                          "form_points_5", "rest_days", "played_10"],
+        }
+        for lg in ("col", "mex", "esp", "eng")
+    },
+    "nba": {
+        "schema": "nba", "table": "nba.game_predictions",
+        "markets": {
+            "winner": ("p_home_win", "winner", None),
+            "over_215_5": ("p_over_215_5", "points", 215.5),
+            "over_220_5": ("p_over_220_5", "points", 220.5),
+            "over_225_5": ("p_over_225_5", "points", 225.5),
+            "over_230_5": ("p_over_230_5", "points", 230.5),
+            "over_235_5": ("p_over_235_5", "points", 235.5),
+        },
+        "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win"],
+        "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
+    },
     "nhl": {
         "schema": "nhl", "table": "nhl.game_predictions",
         "markets": {
@@ -71,6 +106,16 @@ def _correct(row, kind: str, line: float | None, p: float) -> bool | None:
         if res is None:
             return None
         return pick_yes == (res != "A")
+    if kind == "winner":
+        w = row.get("actual_winner")
+        if w is None:
+            return None
+        return pick_yes == (w == "H")
+    if kind == "points":
+        actual = row.get("actual_total")
+        if actual is None or (isinstance(actual, float) and np.isnan(actual)):
+            return None
+        return pick_yes == (actual > line)
     actual = row.get("actual_total_goals") if kind == "goals" else row.get("actual_total_corners")
     if actual is None or (isinstance(actual, float) and np.isnan(actual)):
         return None
@@ -100,9 +145,10 @@ def _row_features(row, spec, market, p) -> dict:
 
 def _frame(engine, league: str) -> pd.DataFrame:
     spec = SPECS[league]
+    extra = f" AND {spec['where']}" if spec.get("where") else ""
     with engine.begin() as conn:
         df = pd.read_sql(text(
-            f"SELECT * FROM {spec['table']} WHERE outcome_filled_at_utc IS NOT NULL"), conn)
+            f"SELECT * FROM {spec['table']} WHERE outcome_filled_at_utc IS NOT NULL{extra}"), conn)
     rows, ys, dates = [], [], []
     for _, r in df.iterrows():
         rd = r.to_dict()
