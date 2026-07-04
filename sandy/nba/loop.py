@@ -177,7 +177,7 @@ def fit_model(engine: Engine, as_of: date | None = None) -> NbaModel:
         r2[idx[ai]] = 1.0; r2[n_t + idx[hi]] = -1.0                 # away offense − home defense
         rows.append(r2); ys.append(ap); ws.append(wt)
     X = np.asarray(rows); y = np.asarray(ys, dtype=float); sw = np.sqrt(np.asarray(ws))
-    mu = float(np.average(y, weights=np.repeat(w, 1)))  # baseline points per team
+    mu = float(np.average(y, weights=np.repeat(w, 2)))  # baseline points per team (2 rows/game)
     beta, *_ = np.linalg.lstsq(X * sw[:, None], (y - mu) * sw, rcond=None)
     off = {t: float(beta[idx[t]]) for t in teams}
     dfn = {t: float(beta[n_t + idx[t]]) for t in teams}
