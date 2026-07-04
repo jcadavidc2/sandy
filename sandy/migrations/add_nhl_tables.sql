@@ -86,3 +86,7 @@ CREATE TABLE IF NOT EXISTS nhl.calibration_snapshots (
     recommended_threshold REAL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Full MLB-parity totals ladder (added 2026-07-04).
+ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS p_over_4_5 REAL;
+ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS p_over_7_5 REAL;

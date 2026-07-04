@@ -20,12 +20,28 @@ logger = logging.getLogger(__name__)
 MIN_SAMPLES = 30
 BUCKETS = [0.0, 0.4, 0.5, 0.6, 0.7, 0.8, 1.01]
 
-# market → (probability column, correctness column). Confidence for a binary
-# market is max(p, 1-p) — how far from a coin flip the pick was.
+# Every stored line gets its own calibration (MLB-style threshold ladder).
+# Correctness is computed from the reconciled actual totals, so adding a line
+# never needs a schema change. Confidence for a binary market is max(p, 1-p).
+def _goal_line(pcol: str, thr: float):
+    return (pcol, "actual_total_goals", lambda r: (r[pcol] >= 0.5) == (r["actual_total_goals"] > thr))
+
+
+def _corner_line(pcol: str, thr: float):
+    return (pcol, "actual_total_corners", lambda r: (r[pcol] >= 0.5) == (r["actual_total_corners"] > thr))
+
+
 MARKETS = {
-    "double_chance": ("p_home_or_draw", "was_correct_double_chance"),
-    "over_2_5": ("p_over_2_5", "was_correct_over_2_5"),
-    "corners_over_9_5": ("p_corners_over_9_5", "was_correct_corners_9_5"),
+    "double_chance": ("p_home_or_draw", "actual_result",
+                      lambda r: (r["p_home_or_draw"] >= 0.5) == (r["actual_result"] != "A")),
+    "over_1_5": _goal_line("p_over_1_5", 1.5),
+    "over_2_5": _goal_line("p_over_2_5", 2.5),
+    "over_3_5": _goal_line("p_over_3_5", 3.5),
+    "over_4_5": _goal_line("p_over_4_5", 4.5),
+    "corners_over_8_5": _corner_line("p_corners_over_8_5", 8.5),
+    "corners_over_9_5": _corner_line("p_corners_over_9_5", 9.5),
+    "corners_over_10_5": _corner_line("p_corners_over_10_5", 10.5),
+    "corners_over_11_5": _corner_line("p_corners_over_11_5", 11.5),
 }
 
 
@@ -53,14 +69,14 @@ def compute_calibration(engine: Engine, lookback_days: int | None = None) -> lis
     with engine.begin() as conn:
         df = pd.read_sql(text(f"SELECT * FROM mls.match_predictions WHERE {where}"), conn)
     snaps = []
-    for market, (pcol, ccol) in MARKETS.items():
-        sub = df.dropna(subset=[pcol, ccol])
+    for market, (pcol, actual_col, correct_fn) in MARKETS.items():
+        sub = df.dropna(subset=[pcol, actual_col])
         if len(sub) < MIN_SAMPLES:
             logger.info("MLS calibration: market %s has %s samples (<%s) — skipped",
                         market, len(sub), MIN_SAMPLES)
             continue
         p = sub[pcol].to_numpy(dtype=float)
-        correct = sub[ccol].to_numpy(dtype=bool)
+        correct = sub.apply(correct_fn, axis=1).to_numpy(dtype=bool)
         conf = np.maximum(p, 1 - p)
         picked_yes = p >= 0.5
         outcome_yes = np.where(picked_yes, correct, ~correct)  # reconstruct the actual binary outcome

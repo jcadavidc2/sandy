@@ -22,10 +22,18 @@ logger = logging.getLogger(__name__)
 
 MIN_SAMPLES = 30
 BUCKETS = [0.0, 0.4, 0.5, 0.6, 0.7, 0.8, 1.01]
+# Binary markets: prob column + a correctness function over the reconciled row —
+# every totals line gets its own calibration, exactly like MLB's threshold ladder.
+def _mk_line(pcol: str, thr: float):
+    return (pcol, lambda r: (r[pcol] >= 0.5) == (r["actual_total_goals"] > thr))
+
+
 MARKETS = {
-    "double_chance": ("p_home_or_tie", "was_correct_double_chance"),
-    "over_5_5": ("p_over_5_5", "was_correct_over_5_5"),
-    "over_6_5": ("p_over_6_5", "was_correct_over_6_5"),
+    "double_chance": ("p_home_or_tie", lambda r: (r["p_home_or_tie"] >= 0.5) == (r["actual_reg_result"] != "A")),
+    "over_4_5": _mk_line("p_over_4_5", 4.5),
+    "over_5_5": _mk_line("p_over_5_5", 5.5),
+    "over_6_5": _mk_line("p_over_6_5", 6.5),
+    "over_7_5": _mk_line("p_over_7_5", 7.5),
 }
 MEDALS = ["🥇", "🥈", "🥉"]
 
@@ -76,12 +84,13 @@ def calibrate(config: Config | None = None, *, lookback_days: int | None = None)
     with engine.begin() as conn:
         df = pd.read_sql(text(f"SELECT * FROM nhl.game_predictions WHERE {where}"), conn)
     snaps = []
-    for market, (pcol, ccol) in MARKETS.items():
-        sub = df.dropna(subset=[pcol, ccol])
+    for market, (pcol, correct_fn) in MARKETS.items():
+        need = [pcol, "actual_total_goals" if market != "double_chance" else "actual_reg_result"]
+        sub = df.dropna(subset=need)
         if len(sub) < MIN_SAMPLES:
             continue
         p = sub[pcol].to_numpy(dtype=float)
-        correct = sub[ccol].to_numpy(dtype=bool)
+        correct = sub.apply(correct_fn, axis=1).to_numpy(dtype=bool)
         conf = np.maximum(p, 1 - p)
         picked_yes = p >= 0.5
         outcome_yes = np.where(picked_yes, correct, ~correct)
@@ -152,6 +161,25 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14,
 
 
 # ------------------------------- digest ------------------------------------
+NHL_GOAL_LINES = [("over_4_5", "p_over_4_5", 4.5), ("over_5_5", "p_over_5_5", 5.5),
+                  ("over_6_5", "p_over_6_5", 6.5), ("over_7_5", "p_over_7_5", 7.5)]
+
+
+def _candidates(reliability: dict, r) -> list[dict]:
+    from sandy.mls.recommend import evaluate
+    out = []
+    dc = evaluate(reliability, "double_chance", r.p_home_or_tie,
+                  "Local o empata (reg.)", "Gana visitante (reg.)")
+    if dc:
+        out.append(dc)
+    for market, col, thr in NHL_GOAL_LINES:
+        c = evaluate(reliability, market, getattr(r, col),
+                     f"Más de {thr} goles", f"Menos de {thr} goles")
+        if c:
+            out.append(c)
+    return out
+
+
 def format_daily_digest(config: Config | None = None) -> str:
     cfg = config or load_config()
     engine = create_engine(cfg)
@@ -180,30 +208,39 @@ def format_daily_digest(config: Config | None = None) -> str:
             for r in night:
                 mark = "✅" if r.was_correct_double_chance else "❌"
                 parts.append(f"{mark} {r.home_team} {r.actual_home_goals}-{r.actual_away_goals} {r.away_team}")
+        from sandy.mls.recommend import load_reliability
+        reliability = load_reliability(conn, "nhl")
         picks = conn.execute(text("""
-            SELECT home_team, away_team, p_home_or_tie, p_away_win_reg, p_over_5_5, p_over_6_5,
-                   most_likely_home, most_likely_away
-            FROM nhl.game_predictions
+            SELECT * FROM nhl.game_predictions
             WHERE match_date BETWEEN :a AND :b AND outcome_filled_at_utc IS NULL AND NOT is_backtest
-            ORDER BY GREATEST(p_home_or_tie, p_away_win_reg) DESC LIMIT 12
+            ORDER BY match_date, id
         """), {"a": today, "b": today + timedelta(days=1)}).fetchall()
         parts.append("")
         if not picks:
             parts.append("😴 No hay juegos NHL hoy.")
         else:
-            parts.append(f"🔮 Picks de hoy ({len(picks)}):")
-            for i, r in enumerate(picks):
-                medal = MEDALS[i] if i < len(MEDALS) else "•"
-                if r.p_home_or_tie >= r.p_away_win_reg:
-                    pick, conf = "Local o empate (reg.)", r.p_home_or_tie
-                else:
-                    pick, conf = "Gana visitante (reg.)", r.p_away_win_reg
-                warn = " ⚠️ parejo" if conf < 0.55 else ""
-                parts.append(f"{medal} {r.home_team} vs {r.away_team} → {pick} {conf:.0%}{warn} | "
+            recs = []
+            for r in picks:
+                for c in _candidates(reliability, r):
+                    recs.append((r, c))
+            recs.sort(key=lambda x: (-x[1]["hist_acc"], -x[1]["conf"]))
+            if recs:
+                parts.append("🎯 APUESTAS RECOMENDADAS (históricamente ≥60% a esta confianza):")
+                for r, c in recs[:8]:
+                    parts.append(f"• {r.home_team} vs {r.away_team} → {c['label']} "
+                                 f"({c['conf']:.0%}) · histórico {c['hist_acc']:.0%} (n={c['hist_n']})")
+            else:
+                parts.append("🎯 Hoy ningún pick supera el filtro de confianza — mejor no apostar.")
+            parts.append("")
+            parts.append(f"📋 Todos los juegos ({len(picks)}):")
+            for r in picks:
+                side = "1X" if r.p_home_or_tie >= r.p_away_win_reg else "2"
+                conf = max(r.p_home_or_tie, r.p_away_win_reg)
+                parts.append(f"· {r.home_team} vs {r.away_team} — {side} {conf:.0%} | "
                              f"O5.5 {r.p_over_5_5:.0%} | O6.5 {r.p_over_6_5:.0%} | "
                              f"prob. {r.most_likely_home}-{r.most_likely_away}")
     parts.append("")
-    parts.append("ℹ️ reg. = al reglamento (OT/SO cuenta como empate) · totales incluyen OT/SO")
+    parts.append("ℹ️ reg. = al reglamento (OT/SO cuenta como empate) · totales incluyen OT/SO · histórico = % de acierto real de picks con esta confianza")
     return "\n".join(parts)
 
 
