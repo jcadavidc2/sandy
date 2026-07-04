@@ -67,3 +67,13 @@ def backtest_cmd() -> None:
     from sandy.nhl.loop import run_backtest
     res = run_backtest(load_config())
     click.echo(f"nhl backtest: {res['predicted']} predicted, {res.get('reconciled')} reconciled")
+
+
+@nhl.command("meta")
+def meta_cmd() -> None:
+    """Retrain the meta-model (P(pick correct)) and re-pick its threshold."""
+    from sandy.betmeta import train_meta
+    res = train_meta("nhl")
+    click.echo(f"nhl meta: rows={res['rows']} threshold={res['threshold']}")
+    for t in res["eval_table"]:
+        click.echo(f"  meta>={t['thr']}: acc={t['acc']} n={t['n']}")

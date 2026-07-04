@@ -42,3 +42,29 @@ def evaluate(reliability: dict, market: str, p: float | None,
         return None
     return {"market": market, "label": yes_label if yes else no_label,
             "conf": conf, "hist_acc": acc, "hist_n": n}
+
+
+def meta_gate(league: str, cfg, row, candidates: list[dict]) -> list[dict]:
+    """Score each candidate with the meta-model; keep those clearing its threshold.
+    Falls back to the bucket-only candidates when no meta artifact exists."""
+    from sandy.betmeta import load_meta, score_candidate
+    loaded = load_meta(league, cfg)
+    if not loaded:
+        return candidates
+    _, _, thr = loaded
+    rd = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+    out = []
+    for c in candidates:
+        mp = score_candidate(league, cfg, rd, c["market"], rd.get(_pcol_for(league, c["market"])) or c["conf"])
+        if mp is None:
+            out.append(c)
+            continue
+        c = {**c, "meta": mp}
+        if thr is None or mp >= thr:
+            out.append(c)
+    return out
+
+
+def _pcol_for(league: str, market: str) -> str:
+    from sandy.betmeta import SPECS
+    return SPECS[league]["markets"][market][0]

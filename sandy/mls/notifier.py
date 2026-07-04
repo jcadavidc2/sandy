@@ -80,16 +80,18 @@ def format_daily_digest(config: Config | None = None, *, for_date: date | None =
             parts.append("😴 No hay partidos MLS hoy.")
         else:
             # 🎯 The tip sheet: every calibrated-trustworthy bet, best first.
+            from .recommend import meta_gate
             recs = []
             for r in rows:
-                for c in _candidates(reliability, r):
+                for c in meta_gate("mls", cfg, r, _candidates(reliability, r)):
                     recs.append((r, c))
-            recs.sort(key=lambda x: (-x[1]["hist_acc"], -x[1]["conf"]))
+            recs.sort(key=lambda x: (-x[1].get("meta", 0), -x[1]["hist_acc"], -x[1]["conf"]))
             if recs:
-                parts.append("🎯 APUESTAS RECOMENDADAS (históricamente ≥60% a esta confianza):")
+                parts.append("🎯 APUESTAS RECOMENDADAS (filtro meta-modelo):")
                 for r, c in recs[:8]:
+                    meta = f" · 🤖 {c['meta']:.0%}" if c.get("meta") is not None else ""
                     parts.append(f"• {r.home_team} vs {r.away_team} → {c['label']} "
-                                 f"({c['conf']:.0%}) · histórico {c['hist_acc']:.0%} (n={c['hist_n']})")
+                                 f"({c['conf']:.0%}) · histórico {c['hist_acc']:.0%}{meta}")
             else:
                 parts.append("🎯 Hoy ningún pick supera el filtro de confianza — mejor no apostar.")
             parts.append("")

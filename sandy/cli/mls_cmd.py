@@ -80,3 +80,13 @@ def backtest_cmd(start) -> None:
     from sandy.mls.backtest import run_backtest
     res = run_backtest(load_config(), start=start.date() if start else None)
     click.echo(f"mls backtest: {res['predicted']} predicted, {res.get('reconciled')} reconciled")
+
+
+@mls.command("meta")
+def meta_cmd() -> None:
+    """Retrain the meta-model (P(pick correct)) and re-pick its threshold."""
+    from sandy.betmeta import train_meta
+    res = train_meta("mls")
+    click.echo(f"mls meta: rows={res['rows']} threshold={res['threshold']}")
+    for t in res["eval_table"]:
+        click.echo(f"  meta>={t['thr']}: acc={t['acc']} n={t['n']}")

@@ -35,19 +35,22 @@ echo "=========================================="
 echo "[$(date -Iseconds)] NHL Nightly Pipeline starting"
 echo "=========================================="
 
-echo "[$(date -Iseconds)] Step 1/5: Ingest schedule window..."
+echo "[$(date -Iseconds)] Step 1/6: Ingest schedule window..."
 $SANDY nhl ingest 2>&1 | tail -1 || fail "ingest"
 
-echo "[$(date -Iseconds)] Step 2/5: Reconcile finished predictions..."
+echo "[$(date -Iseconds)] Step 2/6: Reconcile finished predictions..."
 $SANDY nhl reconcile 2>&1 | tail -1 || fail "reconcile"
 
-echo "[$(date -Iseconds)] Step 3/5: Refit regulation-goals model..."
+echo "[$(date -Iseconds)] Step 3/6: Refit regulation-goals model..."
 $SANDY nhl ratings 2>&1 | tail -1 || fail "ratings"
 
-echo "[$(date -Iseconds)] Step 4/5: Recompute calibration..."
+echo "[$(date -Iseconds)] Step 4/6: Recompute calibration..."
 $SANDY nhl calibrate 2>&1 | tail -4 || fail "calibrate"
 
-echo "[$(date -Iseconds)] Step 5/5: Predict + send digest..."
+echo "[$(date -Iseconds)] Step 5/6: Retrain meta-model..."
+$SANDY nhl meta 2>&1 | tail -1 || fail "meta"
+
+echo "[$(date -Iseconds)] Step 6/6: Predict + send digest..."
 $SANDY nhl predict --notify 2>&1 | tail -20 || fail "predict"
 
 echo "=========================================="

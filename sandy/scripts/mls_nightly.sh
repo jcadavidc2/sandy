@@ -35,19 +35,22 @@ echo "=========================================="
 echo "[$(date -Iseconds)] MLS Nightly Pipeline starting"
 echo "=========================================="
 
-echo "[$(date -Iseconds)] Step 1/5: Ingest window + match stats..."
+echo "[$(date -Iseconds)] Step 1/6: Ingest window + match stats..."
 $SANDY mls ingest 2>&1 | tail -1 || fail "ingest"
 
-echo "[$(date -Iseconds)] Step 2/5: Reconcile finished predictions..."
+echo "[$(date -Iseconds)] Step 2/6: Reconcile finished predictions..."
 $SANDY mls reconcile 2>&1 | tail -1 || fail "reconcile"
 
-echo "[$(date -Iseconds)] Step 3/5: Refit goals + corners models..."
+echo "[$(date -Iseconds)] Step 3/6: Refit goals + corners models..."
 $SANDY mls ratings 2>&1 | tail -1 || fail "ratings"
 
-echo "[$(date -Iseconds)] Step 4/5: Recompute calibration..."
+echo "[$(date -Iseconds)] Step 4/6: Recompute calibration..."
 $SANDY mls calibrate 2>&1 | tail -4 || fail "calibrate"
 
-echo "[$(date -Iseconds)] Step 5/5: Predict + send digest..."
+echo "[$(date -Iseconds)] Step 5/6: Retrain meta-model..."
+$SANDY mls meta 2>&1 | tail -1 || fail "meta"
+
+echo "[$(date -Iseconds)] Step 6/6: Predict + send digest..."
 $SANDY mls predict --notify 2>&1 | tail -20 || fail "predict"
 
 echo "=========================================="
