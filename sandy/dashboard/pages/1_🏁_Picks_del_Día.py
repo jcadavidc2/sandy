@@ -23,6 +23,9 @@ min_meta = c3.slider("🤖 mínimo", 0.5, 0.99, 0.5, 0.01,
                      help="Sube esto para quedarte solo con la crema del día.")
 solo_mejor = c4.toggle("Solo el mejor por juego", value=True,
                        help="Apagado = TODOS los picks ✅ (un juego puede tener varios).")
+nivel_sel = st.radio("Nivel", ["Todas ✅", "⭐ 🤖 ≥ 90% (~94-95% real)", "💎 🤖 ≥ 95% (~95-96% real)"],
+                     horizontal=True,
+                     help="Niveles validados en la ventana de test intocada, agrupando las 9 ligas.")
 if len(rng) != 2:
     st.stop()
 
@@ -44,6 +47,12 @@ if not frames:
 
 df = pd.concat(frames, ignore_index=True)
 df = df[df["🤖"] >= min_meta].sort_values("🤖", ascending=False).reset_index(drop=True)
+if "nivel" not in df.columns:
+    df.insert(1, "nivel", "✅")
+if nivel_sel.startswith("⭐"):
+    df = df[df["nivel"].isin(["⭐", "💎"])]
+elif nivel_sel.startswith("💎"):
+    df = df[df["nivel"] == "💎"]
 
 from sandy.dashboard.filters import filter_ui
 df = filter_ui(df, "picks", skip=("umbral",))
@@ -59,7 +68,7 @@ if len(played):
               f"{(played['acertó'] == '✓').mean():.0%} ({(played['acertó'] == '✓').sum()}/{len(played)})")
 
 st.dataframe(
-    df[["liga", "fecha", "partido", "mercado", "pick", "prob", "🤖", "umbral",
+    df[["nivel", "liga", "fecha", "partido", "mercado", "pick", "prob", "🤖", "umbral",
         "acierto_hist", "resultado", "acertó"]],
     use_container_width=True, hide_index=True, height=520,
     column_config={

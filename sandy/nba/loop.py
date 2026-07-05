@@ -476,7 +476,8 @@ def format_daily_digest(config: Config | None = None, *, for_date: date | None =
                 parts.append("🎯 APUESTAS RECOMENDADAS:")
                 for r, c in recs[:8]:
                     meta = f" · 🤖 {c['meta']:.0%}" if c.get("meta") is not None else ""
-                    parts.append(f"• {r.home_team} vs {r.away_team} → {c['label']} "
+                    star = "💎 " if (c.get("meta") or 0) >= 0.95 else ("⭐ " if (c.get("meta") or 0) >= 0.90 else "")
+                    parts.append(f"• {star}{r.home_team} vs {r.away_team} → {c['label']} "
                                  f"({c['conf']:.0%}) · hist {c['hist_acc']:.0%}{meta}")
             else:
                 parts.append("🎯 Ningún pick supera el filtro hoy.")

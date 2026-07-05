@@ -283,7 +283,9 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
                 res_str = _actual_str(rd, kind)
             if ok:
                 yes, no = _pick_labels(kind, line)
-                pick_row = {"fecha": rd["match_date"], "partido": f"{base['local']} vs {base['visitante']}",
+                nivel = "💎" if (mp or 0) >= 0.95 else ("⭐" if (mp or 0) >= 0.90 else "✅")
+                pick_row = {"nivel": nivel,
+                            "fecha": rd["match_date"], "partido": f"{base['local']} vs {base['visitante']}",
                             "mercado": market_label(market, kind), "pick": yes if p >= 0.5 else no,
                             "prob": conf, "🤖": mp, "umbral": thr, "acierto_hist": acc_thr,
                             "resultado": res_str or "(pendiente)",
