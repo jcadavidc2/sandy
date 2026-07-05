@@ -16,58 +16,9 @@ st.title("📋 Tablero por liga")
 
 GROUP_TITLES = {"result": "DOBLE OPORTUNIDAD", "goals": "META MODEL GOALS",
                 "corners": "META MODEL CORNER KICKS", "winner": "GANADOR",
-                "points": "META MODEL PUNTOS", "btts": "AMBOS ANOTAN"}
+                "points": "META MODEL PUNTOS", "btts": "AMBOS ANOTAN", "runs": "META MODEL CARRERAS"}
 
-league = st.selectbox("Liga", list(D.LEAGUES) + ["mlb"],
-                      format_func=lambda k: "⚾ MLB" if k == "mlb" else D.league_title(k))
-
-# ---------------------------------------------------------------- MLB adapter
-if league == "mlb":
-    st.caption("⚾ MLB — derived.over_under_outcomes: predicciones diarias reales O5.5–O11.5 "
-               "con resultados. (El 🤖 meta de MLB cubre O5.5 vía el digest; integración total al Tablero en curso.)")
-    from sqlalchemy import text
-    from sandy.config import load_config
-    from sandy.db import create_engine
-
-    MLB_LINES = ["5_5", "6_5", "7_5", "8_5", "9_5", "10_5", "11_5"]
-
-    @st.cache_data(ttl=600)
-    def _mlb(start, end):
-        e = create_engine(load_config())
-        with e.begin() as c:
-            return pd.read_sql(text("""
-                SELECT * FROM derived.over_under_outcomes
-                WHERE game_date BETWEEN :a AND :b
-                ORDER BY game_date, id"""), c, params={"a": start, "b": end})
-
-    import datetime as _dt
-    rng = st.date_input("Rango", (_dt.date.today() - timedelta(days=7), _dt.date.today()))
-    if len(rng) == 2:
-        raw = _mlb(*rng)
-        if raw.empty:
-            st.info("Sin predicciones MLB en el rango.")
-        else:
-            rows, picks = [], []
-            for _, r in raw.iterrows():
-                row = {"fecha": r["game_date"], "partido": f"{r['home_team_code']} vs {r['away_team_code']}"}
-                for ln in MLB_LINES:
-                    p = r.get(f"p_over_{ln}")
-                    if p is None or pd.isna(p):
-                        row[f"O{ln.replace('_', '.')}"] = "—"
-                        continue
-                    conf = p if p >= 0.5 else 1 - p
-                    ok = r.get(f"was_correct_{ln}")
-                    mark = "" if pd.isna(ok) else (" ✓" if ok else " ✗")
-                    row[f"O{ln.replace('_', '.')}"] = f"{conf:.0%}{mark}"
-                tot = r.get("actual_total_runs")
-                row["carreras"] = int(tot) if pd.notna(tot) else "(por jugar)"
-                rows.append(row)
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=480)
-            played = raw[raw["outcome_filled_at_utc"].notna()]
-            if len(played):
-                acc = played["was_correct_5_5"].mean()
-                st.metric("O5.5 en el rango", f"{acc:.0%} ({int(played['was_correct_5_5'].sum())}/{len(played)})")
-    st.stop()
+league = st.selectbox("Liga", list(D.LEAGUES), format_func=D.league_title)
 
 # ------------------------------------------------- Meta matrices (last model)
 art = D.meta_artifact(league)
@@ -88,13 +39,13 @@ else:
             row = {"P(acierto)": f"≥{thr:.0%}"}
             for m in mkts:
                 cell = next((t for t in ebm[m]["table"] if abs(t["thr"] - thr) < 1e-9), None)
-                row[D.market_label(m)] = (f"{cell['acc']:.0%} ({cell['correct']}/{cell['n']})"
+                row[D.market_label(m, kind)] = (f"{cell['acc']:.0%} ({cell['correct']}/{cell['n']})"
                                           if cell and cell["n"] else "—")
             rows.append(row)
         mdf = pd.DataFrame(rows).set_index("P(acierto)")
 
         def _hl(col):
-            rec = thr_by.get(next(m for m in mkts if D.market_label(m) == col.name))
+            rec = thr_by.get(next(m for m in mkts if D.market_label(m, kind) == col.name))
             mark = f"≥{rec:.0%}" if rec is not None else None
             return ["background-color: #1b5e20; color: white" if idx == mark else ""
                     for idx in col.index]

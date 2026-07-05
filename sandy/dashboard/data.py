@@ -24,6 +24,7 @@ LEAGUES = {
     "nhl": ("🏒", "NHL"),
     "nba": ("🏀", "NBA"),
     "worldcup": ("🏆", "Mundial 2026"),
+    "mlb": ("⚾", "MLB"),
 }
 
 
@@ -32,7 +33,7 @@ def league_title(key: str) -> str:
     return f"{flag} {name}"
 
 
-def market_label(market: str) -> str:
+def market_label(market: str, kind: str | None = None) -> str:
     if market == "double_chance":
         return "Doble oportunidad (1X/2)"
     if market == "winner":
@@ -40,6 +41,8 @@ def market_label(market: str) -> str:
     if market == "btts":
         return "Ambos anotan (BTTS)"
     line = market.rsplit("over_", 1)[-1].replace("_", ".")
+    if kind == "runs":
+        return f"Carreras {line}"
     if market.startswith("corners_"):
         return f"Corners {line}"
     return f"Puntos {line}" if float(line) > 50 else f"Goles {line}"
@@ -53,7 +56,7 @@ def _pick_labels(kind: str, line) -> tuple[str, str]:
         return "Gana local", "Gana visitante"
     if kind == "btts":
         return "Ambos anotan: SÍ", "Ambos anotan: NO"
-    unit = {"goals": "goles", "corners": "corners", "points": "puntos"}[kind]
+    unit = {"goals": "goles", "corners": "corners", "points": "puntos", "runs": "carreras"}[kind]
     return f"Más de {line} {unit}", f"Menos de {line} {unit}"
 
 
@@ -63,6 +66,9 @@ def _actual_str(rd: dict, kind: str) -> str:
     if kind == "corners":
         c = rd.get("actual_total_corners")
         return f"{c} corners" if c is not None else ""
+    if kind == "runs":
+        t = rd.get("actual_total_runs")
+        return f"{int(t)} carreras" if t is not None and not pd.isna(t) else ""
     return f"{rd.get('actual_home_goals')}-{rd.get('actual_away_goals')}"
 
 
@@ -125,7 +131,7 @@ def scored_results(league: str) -> pd.DataFrame:
         return res
     loaded = _meta(league)
     if loaded:
-        booster, feats, _thr, iso = loaded
+        booster, feats, _thr, iso, _by_mkt = loaded
         X = pd.DataFrame(feat_rows).reindex(columns=feats)
         raw = booster.predict(X.to_numpy())
         res["meta"] = iso.predict(raw) if iso is not None else raw
@@ -181,7 +187,7 @@ def today_board(league: str, day: date) -> pd.DataFrame:
             meta_ok = meta_p is not None and rec_thr is not None and meta_p >= rec_thr
             out.append({
                 "liga": league_title(league), "partido": f"{rd['home_team']} vs {rd['away_team']}",
-                "fecha": rd["match_date"], "mercado": market_label(market), "pick": yes if p >= 0.5 else no,
+                "fecha": rd["match_date"], "mercado": market_label(market, kind), "pick": yes if p >= 0.5 else no,
                 "prob": conf, "hist": acc, "hist_n": n, "meta": meta_p,
                 "umbral": rec_thr, "recomendada": bool(hist_ok and meta_ok), "replay": sim,
             })
@@ -252,7 +258,7 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
         for market, (pcol, kind, line) in spec["markets"].items():
             p = rd.get(pcol)
             if p is None:
-                base[market_label(market)] = "—"
+                base[market_label(market, kind)] = "—"
                 continue
             p = float(p)
             conf = p if p >= 0.5 else 1 - p
@@ -268,13 +274,13 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
                 cell += " ✅"
             if correct is not None:
                 cell += " ✓" if correct else " ✗"
-            base[market_label(market)] = cell
+            base[market_label(market, kind)] = cell
             if finished and not res_str:
                 res_str = _actual_str(rd, kind)
             if ok and (best is None or (mp or 0) > best["🤖"]):
                 yes, no = _pick_labels(kind, line)
                 best = {"fecha": rd["match_date"], "partido": f"{base['local']} vs {base['visitante']}",
-                        "mercado": market_label(market), "pick": yes if p >= 0.5 else no,
+                        "mercado": market_label(market, kind), "pick": yes if p >= 0.5 else no,
                         "prob": conf, "🤖": mp, "umbral": thr, "acierto_hist": acc_thr,
                         "resultado": res_str or "(pendiente)",
                         "acertó": ("✓" if correct else "✗") if correct is not None else "—"}
@@ -342,16 +348,22 @@ def game_covariates(league: str, day: date) -> pd.DataFrame:
     engine = create_engine(load_config())
     with engine.begin() as conn:
         params = {"a": day, "b": day + timedelta(days=1)}
-        rows = conn.execute(text(f"""
-            SELECT * FROM {spec['table']}
-            WHERE match_date BETWEEN :a AND :b{extra}
-              AND outcome_filled_at_utc IS NULL AND NOT is_backtest
-            ORDER BY match_date, id"""), params).fetchall()
-        if not rows:
+        if spec.get("no_backtest_col"):
             rows = conn.execute(text(f"""
                 SELECT * FROM {spec['table']}
-                WHERE match_date BETWEEN :a AND :b{extra} AND is_backtest
+                WHERE match_date BETWEEN :a AND :b{extra}
                 ORDER BY match_date, id"""), params).fetchall()
+        else:
+            rows = conn.execute(text(f"""
+                SELECT * FROM {spec['table']}
+                WHERE match_date BETWEEN :a AND :b{extra}
+                  AND outcome_filled_at_utc IS NULL AND NOT is_backtest
+                ORDER BY match_date, id"""), params).fetchall()
+            if not rows:
+                rows = conn.execute(text(f"""
+                    SELECT * FROM {spec['table']}
+                    WHERE match_date BETWEEN :a AND :b{extra} AND is_backtest
+                    ORDER BY match_date, id"""), params).fetchall()
     out = []
     for r in rows:
         rd = dict(r._mapping)
@@ -401,7 +413,7 @@ def meta_summary(league: str) -> dict:
 
 
 def spec_markets(league: str) -> dict[str, str]:
-    return {m: market_label(m) for m in SPECS[league]["markets"]}
+    return {m: market_label(m, SPECS[league]["markets"][m][1]) for m in SPECS[league]["markets"]}
 
 
 def ladder(df: pd.DataFrame, thresholds: list[float]) -> pd.DataFrame:
