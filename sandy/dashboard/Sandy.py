@@ -77,7 +77,23 @@ if games.empty:
 st.caption("Cada celda: **prob del modelo** (🤖 P(acierto) / Th umbral de esa línea → "
            "acierto histórico a ese umbral) — **✅ = apuesta** (🤖 ≥ Th; puede haber varias por juego) — "
            "**✓/✗** = si ya se jugó, cómo salió ese pick.")
-st.dataframe(games, use_container_width=True, hide_index=True, height=440)
+
+# Column filters for the games board
+base_cols = ["fecha", "local", "visitante"]
+mkt_cols = [c for c in games.columns if c not in base_cols + ["resultado"]]
+f1, f2, f3 = st.columns([1.5, 2.5, 1.2])
+q = f1.text_input("🔍 Equipo", placeholder="filtra filas por equipo…")
+sel_cols = f2.multiselect("Mercados (columnas a mostrar)", mkt_cols, placeholder="Todos")
+solo_ok = f3.toggle("Solo filas con ✅")
+view = games
+if q:
+    view = view[view["local"].str.contains(q, case=False, na=False)
+                | view["visitante"].str.contains(q, case=False, na=False)]
+show_mkts = sel_cols or mkt_cols
+if solo_ok:
+    view = view[view[show_mkts].apply(lambda r: any("✅" in str(v) for v in r), axis=1)]
+st.dataframe(view[base_cols + show_mkts + ["resultado"]],
+             use_container_width=True, hide_index=True, height=440)
 
 with st.expander("🧠 Covariables de estos juegos"):
     days = pd.date_range(rng[0], rng[1]).date
@@ -85,6 +101,8 @@ with st.expander("🧠 Covariables de estos juegos"):
         st.caption("Rango largo — mostrando covariables de los últimos 10 días del rango.")
         days = days[-10:]
     cov = pd.concat([D.game_covariates(league, d) for d in days], ignore_index=True)
+    if q and not cov.empty:
+        cov = cov[cov["partido"].str.contains(q, case=False, na=False)]
     if cov.empty:
         st.info("Sin covariables registradas en el rango.")
     else:
@@ -96,6 +114,14 @@ st.header("🏁 Picks finales (máx. 1 por juego — el mejor 🤖 entre los ✅
 if finals.empty:
     st.info("Ningún juego del rango tiene picks ✅ — así debe ser cuando el meta no ve valor.")
 else:
+    g1, g2 = st.columns([1.5, 2.5])
+    fq = g1.text_input("🔍 Equipo (picks finales)", placeholder="filtra…")
+    fmk = g2.multiselect("Mercados (picks finales)", sorted(finals["mercado"].unique()),
+                         placeholder="Todos")
+    if fq:
+        finals = finals[finals["partido"].str.contains(fq, case=False, na=False)]
+    if fmk:
+        finals = finals[finals["mercado"].isin(fmk)]
     st.dataframe(finals, use_container_width=True, hide_index=True,
                  column_config={
                      "prob": st.column_config.ProgressColumn("prob", format="percent", min_value=0, max_value=1),

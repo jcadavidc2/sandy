@@ -15,9 +15,8 @@ st.caption("Máx. 1 pick por juego (el mejor 🤖 entre los ✅ de ese juego), c
            "entre todas las ligas y ordenado por 🤖. El mismo filtro del Tablero y de Telegram.")
 
 c1, c2, c3, c4 = st.columns([1.4, 2, 1, 1])
-rng = c1.date_input("Fecha / rango", (date.today(), date.today() + timedelta(days=1)),
-                    help="Hoy por defecto (incluye mañana para juegos de madrugada). "
-                         "Elige fechas pasadas para ver cómo salieron los picks.")
+rng = c1.date_input("Fecha / rango", (date.today(), date.today()),
+                    help="HOY por defecto. Elige fechas pasadas para ver cómo salieron los picks.")
 leagues = c2.multiselect("Ligas", list(D.LEAGUES), default=list(D.LEAGUES),
                          format_func=D.league_title)
 min_meta = c3.slider("🤖 mínimo", 0.5, 0.99, 0.5, 0.01,
@@ -45,6 +44,24 @@ if not frames:
 
 df = pd.concat(frames, ignore_index=True)
 df = df[df["🤖"] >= min_meta].sort_values("🤖", ascending=False).reset_index(drop=True)
+
+# Column filters
+f1, f2, f3 = st.columns([1.5, 2, 1.2])
+q = f1.text_input("🔍 Equipo", placeholder="ej. Nacional, NYY, Madrid…")
+mercados = f2.multiselect("Mercados", sorted(df["mercado"].unique()), placeholder="Todos")
+lado = f3.selectbox("Pick", ["Todos", "Más de…", "Menos de…", "1X / Local", "2 / Visitante"])
+if q:
+    df = df[df["partido"].str.contains(q, case=False, na=False)]
+if mercados:
+    df = df[df["mercado"].isin(mercados)]
+if lado == "Más de…":
+    df = df[df["pick"].str.startswith("Más")]
+elif lado == "Menos de…":
+    df = df[df["pick"].str.startswith("Menos")]
+elif lado == "1X / Local":
+    df = df[df["pick"].str.contains("1X|local", case=False)]
+elif lado == "2 / Visitante":
+    df = df[df["pick"].str.contains("visitante", case=False)]
 
 pend = df[df["acertó"] == "—"]
 played = df[df["acertó"] != "—"]
