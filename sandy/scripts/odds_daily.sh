@@ -27,6 +27,7 @@ echo "[$(date -Iseconds)] odds daily COMPLETE"
 # portfolio today; odds/value/picks are unaffected. Idempotent (skips if the
 # day is already built). Prints 'portfolio build COMPLETE' into odds.log.
 echo "[$(date -Iseconds)] portfolio diario (Kelly fraccional, dinero de papel)..."
+.venv/bin/python -m sandy.portfolio settle 2>&1 || true
 if ! nice -n 10 .venv/bin/python -m sandy.portfolio build; then
     echo "[$(date -Iseconds)] portfolio build FAILED (non-fatal)"
     tg "⚠️ El portafolio de papel 🎰 falló hoy — cuotas y picks no se afectan"

@@ -43,4 +43,4 @@ PATH=/usr/local/bin:/usr/bin:/bin:/home/ec2-user/.local/bin
 
 # Sandy: odds/value fetch (7:15 AM PST — after MLB morning predictions at 14:00 UTC;
 # frugal: only sports with pending picks today, one fetch per sport per day)
-15 14 * * * /home/ec2-user/sandy/scripts/odds_daily.sh >> /home/ec2-user/sandy/logs/odds.log 2>&1
+15 13 * * * /home/ec2-user/sandy/scripts/odds_daily.sh >> /home/ec2-user/sandy/logs/odds.log 2>&1
