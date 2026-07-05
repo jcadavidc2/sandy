@@ -233,8 +233,24 @@ def _frame(engine, league: str) -> pd.DataFrame:
     return X
 
 
+def _wilson_lb(correct: int, n: int, z: float = 1.96) -> float:
+    """Wilson score lower bound — a small-sample-honest floor on accuracy, so a
+    lucky 26/31 rung can never outrank a solid 474/592 one."""
+    if n == 0:
+        return 0.0
+    phat = correct / n
+    denom = 1 + z * z / n
+    center = phat + z * z / (2 * n)
+    rad = z * ((phat * (1 - phat) / n + z * z / (4 * n * n)) ** 0.5)
+    return (center - rad) / denom
+
+
 def train_meta(league: str, config: Config | None = None) -> dict:
-    """Train + evaluate (chronological holdout) + persist artifact and threshold table."""
+    """Train + calibrate + evaluate on a THREE-WAY chronological split:
+      train (oldest 60%)  → fits the booster (with early stopping vs calib)
+      calib (middle 20%)  → fits the isotonic map + selects thresholds (Wilson LB)
+      test  (final 20%)   → NEVER touched by any choice; all reported ladders/acc
+    So every number shown downstream is honest out-of-sample performance."""
     import lightgbm as lgb
     cfg = config or load_config()
     engine = create_engine(cfg)
@@ -242,40 +258,52 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     if len(X) < MIN_TRAIN_ROWS:
         raise RuntimeError(f"{league}: only {len(X)} meta rows (<{MIN_TRAIN_ROWS})")
     X = X.sort_values("_date").reset_index(drop=True)
-    cut = X["_date"].quantile(0.7)
-    train, hold = X[X["_date"] <= cut], X[X["_date"] > cut]
+    c1, c2 = X["_date"].quantile(0.6), X["_date"].quantile(0.8)
+    train = X[X["_date"] <= c1]
+    calib = X[(X["_date"] > c1) & (X["_date"] <= c2)]
+    test = X[X["_date"] > c2]
     feat_cols = [c for c in X.columns if c not in ("_y", "_date")]
     params = dict(objective="binary", learning_rate=0.05, num_leaves=31,
                   min_data_in_leaf=40, feature_fraction=0.85, bagging_fraction=0.85,
                   bagging_freq=1, verbose=-1, seed=42)
     booster = lgb.train(params, lgb.Dataset(train[feat_cols], label=train["_y"]),
-                        num_boost_round=300)
-    hp_raw = booster.predict(hold[feat_cols])
-    hy = hold["_y"].to_numpy()
-    # ISOTONIC CALIBRATION on the chronological holdout (data the booster never saw):
-    # maps raw scores to honest probabilities, so a displayed "🤖 80%" really hits ~80%.
+                        num_boost_round=500,
+                        valid_sets=[lgb.Dataset(calib[feat_cols], label=calib["_y"])],
+                        callbacks=[lgb.early_stopping(50, verbose=False)])
     from sklearn.isotonic import IsotonicRegression
     from sklearn.metrics import roc_auc_score
+    # Isotonic fitted on CALIB (booster never trained on it)…
+    cp_raw = booster.predict(calib[feat_cols], num_iteration=booster.best_iteration)
+    cy = calib["_y"].to_numpy()
     iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
-    iso.fit(hp_raw, hy.astype(float))
+    iso.fit(cp_raw, cy.astype(float))
+    cp = iso.predict(cp_raw)
+    # …and every REPORTED number comes from TEST, which nothing was tuned on.
+    hp_raw = booster.predict(test[feat_cols], num_iteration=booster.best_iteration)
+    hy = test["_y"].to_numpy()
     hp = iso.predict(hp_raw)
+    hold = test  # reported rows
     auc = round(float(roc_auc_score(hy, hp_raw)), 4)
 
-    def _ladder(mask):
+    def _ladder(mask, probs=None, ys=None):
+        probs = hp if probs is None else probs
+        ys = hy if ys is None else ys
         rows = []
         for thr in THRESHOLDS:
-            m = mask & (hp >= thr)
+            m = mask & (probs >= thr)
             n = int(m.sum())
-            rows.append({"thr": thr, "n": n, "correct": int(hy[m].sum()),
-                         "acc": round(float(hy[m].mean()), 4) if n else None})
+            rows.append({"thr": thr, "n": n, "correct": int(ys[m].sum()),
+                         "acc": round(float(ys[m].mean()), 4) if n else None})
         return rows
 
     all_mask = np.ones(len(hy), dtype=bool)
     table = _ladder(all_mask)
-    # The user's rule: the threshold that MAXIMIZES realized accuracy (with enough
-    # holdout picks to trust the estimate).
-    viable = [t for t in table if (t["n"] or 0) >= 50 and t["acc"] is not None]
-    rec = max(viable, key=lambda t: t["acc"])["thr"] if viable else None
+    # The user's rule (threshold that maximizes accuracy), made small-sample-honest:
+    # selected on CALIB by Wilson lower bound, n>=50 — never on the reported test set.
+    calib_table = _ladder(np.ones(len(cy), dtype=bool), probs=cp, ys=cy)
+    viable = [t for t in calib_table if (t["n"] or 0) >= 50]
+    rec = (max(viable, key=lambda t: _wilson_lb(t["correct"], t["n"]))["thr"]
+           if viable else None)
 
     def _below(mask):
         if rec is None:
@@ -296,28 +324,31 @@ def train_meta(league: str, config: Config | None = None) -> dict:
         gm = row_kinds == kind
         eval_by_group[kind] = {"table": _ladder(gm), "below": _below(gm)}
 
-    # PER-EXACT-LINE ladders + per-line recommended threshold (the user's rule,
-    # applied line by line: each market keeps the threshold that maximizes ITS
-    # holdout accuracy, n>=30; falls back to the global threshold when thin).
+    # PER-EXACT-LINE ladders (reported from TEST) + per-line recommended threshold
+    # SELECTED on CALIB via Wilson lower bound (n>=30; global fallback when thin).
     row_market = np.array([mkt_cols[i][4:] for i in hold_markets])
+    calib_markets = calib[mkt_cols].to_numpy().argmax(axis=1)
+    calib_row_market = np.array([mkt_cols[i][4:] for i in calib_markets])
     eval_by_market, threshold_by_market = {}, {}
     for m in SPECS[league]["markets"]:
         mm = row_market == m
-        lad = _ladder(mm)
-        eval_by_market[m] = {"table": lad, "below": _below(mm)}
-        viable_m = [t for t in lad if (t["n"] or 0) >= 30 and t["acc"] is not None]
-        threshold_by_market[m] = (max(viable_m, key=lambda t: t["acc"])["thr"]
+        eval_by_market[m] = {"table": _ladder(mm), "below": _below(mm)}
+        clad = _ladder(calib_row_market == m, probs=cp, ys=cy)
+        viable_m = [t for t in clad if (t["n"] or 0) >= 30]
+        threshold_by_market[m] = (max(viable_m, key=lambda t: _wilson_lb(t["correct"], t["n"]))["thr"]
                                   if viable_m else rec)
     # Production = the split-trained booster + its isotonic map. (Retraining on ALL
     # data would orphan the calibration — integrity of the 🤖 probability wins.)
     imp = sorted(zip(feat_cols, booster.feature_importance("gain")),
                  key=lambda x: -x[1])[:10]
-    artifact = {"model_str": booster.model_to_string(), "iso": iso, "features": feat_cols,
+    artifact = {"model_str": booster.model_to_string(num_iteration=booster.best_iteration),
+                "iso": iso, "features": feat_cols,
                 "threshold": rec, "eval_table": table, "auc": auc,
                 "eval_below": _below(all_mask), "eval_by_group": eval_by_group,
                 "eval_by_market": eval_by_market, "threshold_by_market": threshold_by_market,
                 "importances": [(f, round(float(g), 1)) for f, g in imp],
-                "trained_rows": len(train), "holdout_rows": len(hold),
+                "trained_rows": len(train), "calib_rows": len(calib), "holdout_rows": len(hold),
+                "best_iteration": int(booster.best_iteration or 0),
                 "trained_at": date.today().isoformat()}
     path = cfg.model.model_dir / f"{league}_meta.pkl"
     with open(path, "wb") as f:

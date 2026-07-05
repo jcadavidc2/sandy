@@ -138,7 +138,7 @@ def scored_results(league: str) -> pd.DataFrame:
     else:
         res["meta"] = None
     res = res.sort_values("match_date").reset_index(drop=True)
-    cut = res["match_date"].quantile(0.7)  # same rule as train_meta's split
+    cut = res["match_date"].quantile(0.8)  # train_meta's TEST split (final 20%)
     res["holdout"] = res["match_date"] > cut
     return res
 
