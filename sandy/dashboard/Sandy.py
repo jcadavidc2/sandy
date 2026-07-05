@@ -23,34 +23,50 @@ league = st.selectbox("Liga", list(D.LEAGUES) + ["mlb"],
 
 # ---------------------------------------------------------------- MLB adapter
 if league == "mlb":
-    st.caption("⚾ MLB corre en su propio esquema histórico (derived.prediction_log). "
-               "Probabilidades + resultado por target; su meta-modelo O5.5 sigue en el digest diario.")
+    st.caption("⚾ MLB — derived.over_under_outcomes: predicciones diarias reales O5.5–O11.5 "
+               "con resultados. (El 🤖 meta de MLB cubre O5.5 vía el digest; integración total al Tablero en curso.)")
     from sqlalchemy import text
     from sandy.config import load_config
     from sandy.db import create_engine
+
+    MLB_LINES = ["5_5", "6_5", "7_5", "8_5", "9_5", "10_5", "11_5"]
 
     @st.cache_data(ttl=600)
     def _mlb(start, end):
         e = create_engine(load_config())
         with e.begin() as c:
             return pd.read_sql(text("""
-                SELECT p.predicted_at_utc::date AS fecha, p.target, p.team_code,
-                       p.probability, p.was_correct
-                FROM derived.prediction_log p
-                WHERE p.predicted_at_utc::date BETWEEN :a AND :b
-                ORDER BY p.predicted_at_utc"""), c, params={"a": start, "b": end})
+                SELECT * FROM derived.over_under_outcomes
+                WHERE game_date BETWEEN :a AND :b
+                ORDER BY game_date, id"""), c, params={"a": start, "b": end})
 
     import datetime as _dt
-    rng = st.date_input("Rango", ( _dt.date.today() - timedelta(days=7), _dt.date.today()))
+    rng = st.date_input("Rango", (_dt.date.today() - timedelta(days=7), _dt.date.today()))
     if len(rng) == 2:
-        mlb = _mlb(*rng)
-        if mlb.empty:
+        raw = _mlb(*rng)
+        if raw.empty:
             st.info("Sin predicciones MLB en el rango.")
         else:
-            mlb["✓"] = mlb["was_correct"].map({True: "✓", False: "✗", None: "—"})
-            st.dataframe(mlb, use_container_width=True, hide_index=True,
-                         column_config={"probability": st.column_config.ProgressColumn(
-                             "prob", format="percent", min_value=0, max_value=1)})
+            rows, picks = [], []
+            for _, r in raw.iterrows():
+                row = {"fecha": r["game_date"], "partido": f"{r['home_team_code']} vs {r['away_team_code']}"}
+                for ln in MLB_LINES:
+                    p = r.get(f"p_over_{ln}")
+                    if p is None or pd.isna(p):
+                        row[f"O{ln.replace('_', '.')}"] = "—"
+                        continue
+                    conf = p if p >= 0.5 else 1 - p
+                    ok = r.get(f"was_correct_{ln}")
+                    mark = "" if pd.isna(ok) else (" ✓" if ok else " ✗")
+                    row[f"O{ln.replace('_', '.')}"] = f"{conf:.0%}{mark}"
+                tot = r.get("actual_total_runs")
+                row["carreras"] = int(tot) if pd.notna(tot) else "(por jugar)"
+                rows.append(row)
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=480)
+            played = raw[raw["outcome_filled_at_utc"].notna()]
+            if len(played):
+                acc = played["was_correct_5_5"].mean()
+                st.metric("O5.5 en el rango", f"{acc:.0%} ({int(played['was_correct_5_5'].sum())}/{len(played)})")
     st.stop()
 
 # ------------------------------------------------- Meta matrices (last model)
