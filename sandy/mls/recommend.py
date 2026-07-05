@@ -45,13 +45,13 @@ def evaluate(reliability: dict, market: str, p: float | None,
 
 
 def meta_gate(league: str, cfg, row, candidates: list[dict]) -> list[dict]:
-    """Score each candidate with the meta-model; keep those clearing its threshold.
-    Falls back to the bucket-only candidates when no meta artifact exists."""
-    from sandy.betmeta import load_meta, score_candidate
+    """Score each candidate with the meta-model; keep those clearing THEIR market's
+    recommended threshold (per-line maximizer, global fallback). Falls back to the
+    bucket-only candidates when no meta artifact exists."""
+    from sandy.betmeta import load_meta, market_threshold, score_candidate
     loaded = load_meta(league, cfg)
     if not loaded:
         return candidates
-    _, _, thr, _iso = loaded
     rd = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
     out = []
     for c in candidates:
@@ -59,7 +59,8 @@ def meta_gate(league: str, cfg, row, candidates: list[dict]) -> list[dict]:
         if mp is None:
             out.append(c)
             continue
-        c = {**c, "meta": mp}
+        thr = market_threshold(league, cfg, c["market"])
+        c = {**c, "meta": mp, "meta_thr": thr}
         if thr is None or mp >= thr:
             out.append(c)
     return out

@@ -23,6 +23,7 @@ LEAGUES = {
     "mls": ("⚽", "MLS"),
     "nhl": ("🏒", "NHL"),
     "nba": ("🏀", "NBA"),
+    "worldcup": ("🏆", "Mundial 2026"),
 }
 
 
@@ -36,6 +37,8 @@ def market_label(market: str) -> str:
         return "Doble oportunidad (1X/2)"
     if market == "winner":
         return "Ganador"
+    if market == "btts":
+        return "Ambos anotan (BTTS)"
     line = market.rsplit("over_", 1)[-1].replace("_", ".")
     if market.startswith("corners_"):
         return f"Corners {line}"
@@ -48,6 +51,8 @@ def _pick_labels(kind: str, line) -> tuple[str, str]:
         return "1X (local o empata)", "2 (gana visitante)"
     if kind == "winner":
         return "Gana local", "Gana visitante"
+    if kind == "btts":
+        return "Ambos anotan: SÍ", "Ambos anotan: NO"
     unit = {"goals": "goles", "corners": "corners", "points": "puntos"}[kind]
     return f"Más de {line} {unit}", f"Menos de {line} {unit}"
 
@@ -185,6 +190,101 @@ def today_board(league: str, day: date) -> pd.DataFrame:
         for c in ("prob", "hist", "meta", "umbral"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
+
+
+def meta_artifact(league: str) -> dict:
+    """Full meta artifact (eval_by_market ladders, per-line thresholds, …) — last trained."""
+    import pickle
+    path = load_config().model.model_dir / f"{league}_meta.pkl"
+    if not path.exists():
+        return {}
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def _acc_at(art: dict, market: str, thr: float | None):
+    """Holdout accuracy (and n) of this market at its recommended threshold."""
+    if thr is None:
+        return None, 0
+    for t in (art.get("eval_by_market", {}).get(market, {}).get("table") or []):
+        if abs(t["thr"] - thr) < 1e-9:
+            return t.get("acc"), t.get("n") or 0
+    return None, 0
+
+
+def date_bounds(league: str):
+    spec = SPECS[league]
+    extra = f" WHERE {spec['where']}" if spec.get("where") else ""
+    engine = create_engine(load_config())
+    with engine.begin() as conn:
+        lo, hi = conn.execute(text(
+            f"SELECT MIN(match_date), MAX(match_date) FROM {spec['table']}{extra}")).fetchone()
+    return lo, hi
+
+
+def board_range(league: str, start: date, end: date) -> pd.DataFrame:
+    """The sketch's Games table: one row per game in [start, end]; per market a
+    composite cell `prob (🤖meta / Th→Acu) ✅` — with the real result and per-pick
+    ✓/✗ for finished games (future games have no result yet)."""
+    spec = SPECS[league]
+    extra = f" AND {spec['where']}" if spec.get("where") else ""
+    live_cond = ("TRUE" if spec.get("no_backtest_col")
+                 else "((outcome_filled_at_utc IS NULL AND NOT is_backtest) OR is_backtest)")
+    engine = create_engine(load_config())
+    cfg = load_config()
+    art = meta_artifact(league)
+    thr_by = art.get("threshold_by_market") or {}
+    global_thr = art.get("threshold")
+    from sandy.betmeta import score_candidate
+    with engine.begin() as conn:
+        rows = conn.execute(text(f"""
+            SELECT * FROM {spec['table']}
+            WHERE match_date BETWEEN :a AND :b{extra} AND {live_cond}
+            ORDER BY match_date, id"""), {"a": start, "b": end}).fetchall()
+    out, picks = [], []
+    for r in rows:
+        rd = dict(r._mapping)
+        base = {"fecha": rd["match_date"], "local": rd["home_team"] if "home_team" in rd else rd.get("home"),
+                "visitante": rd["away_team"] if "away_team" in rd else rd.get("away")}
+        finished = rd.get("outcome_filled_at_utc") is not None
+        res_str = ""
+        best = None
+        for market, (pcol, kind, line) in spec["markets"].items():
+            p = rd.get(pcol)
+            if p is None:
+                base[market_label(market)] = "—"
+                continue
+            p = float(p)
+            conf = p if p >= 0.5 else 1 - p
+            thr = thr_by.get(market, global_thr)
+            acc_thr, _n = _acc_at(art, market, thr)
+            mp = score_candidate(league, cfg, rd, market, p)
+            ok = mp is not None and thr is not None and mp >= thr
+            correct = _correct(rd, kind, line, p) if finished else None
+            cell = f"{conf:.0%}"
+            if mp is not None and thr is not None:
+                cell += f" (🤖{mp:.0%} / Th{thr:.0%}→{(acc_thr or 0):.0%})"
+            if ok:
+                cell += " ✅"
+            if correct is not None:
+                cell += " ✓" if correct else " ✗"
+            base[market_label(market)] = cell
+            if finished and not res_str:
+                res_str = _actual_str(rd, kind)
+            if ok and (best is None or (mp or 0) > best["🤖"]):
+                yes, no = _pick_labels(kind, line)
+                best = {"fecha": rd["match_date"], "partido": f"{base['local']} vs {base['visitante']}",
+                        "mercado": market_label(market), "pick": yes if p >= 0.5 else no,
+                        "prob": conf, "🤖": mp, "umbral": thr, "acierto_hist": acc_thr,
+                        "resultado": res_str or "(pendiente)",
+                        "acertó": ("✓" if correct else "✗") if correct is not None else "—"}
+        base["resultado"] = res_str or "(por jugar)"
+        out.append(base)
+        if best:
+            picks.append(best)
+    games = pd.DataFrame(out)
+    finals = pd.DataFrame(picks).sort_values("🤖", ascending=False) if picks else pd.DataFrame()
+    return games, finals
 
 
 def calibration_latest(league: str) -> pd.DataFrame:

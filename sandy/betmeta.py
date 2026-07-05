@@ -96,6 +96,25 @@ SPECS = {
         "num_cols": ["lambda_home", "lambda_away"],
         "form_keys": ["gf_5", "ga_5", "gf_10", "ga_10", "points_10", "rest_days", "played_10"],
     },
+    # World Cup / national teams: no corners in the data source; covariates are the
+    # DC model factors, surfaced as columns by the football.predictions_meta view.
+    # Its calibration_snapshots table predates the shared shape -> no snapshot write,
+    # and it has no is_backtest column (all reconciled rows are walk-forward).
+    "worldcup": {
+        "schema": "football", "table": "football.predictions_meta",
+        "markets": {
+            "double_chance": ("p_home_or_draw", "result", None),
+            "over_1_5": ("p_over_1_5", "goals", 1.5),
+            "over_2_5": ("p_over_2_5", "goals", 2.5),
+            "over_3_5": ("p_over_3_5", "goals", 3.5),
+            "over_4_5": ("p_over_4_5", "goals", 4.5),
+            "btts": ("p_btts", "btts", None),
+        },
+        "num_cols": ["lambda_home", "lambda_away", "atk_home", "atk_away",
+                     "def_home", "def_away", "home_adv"],
+        "form_keys": [],
+        "no_snapshot": True, "no_backtest_col": True, "no_hist_gate": True,
+    },
 }
 
 
@@ -111,6 +130,11 @@ def _correct(row, kind: str, line: float | None, p: float) -> bool | None:
         if w is None:
             return None
         return pick_yes == (w == "H")
+    if kind == "btts":
+        b = row.get("actual_btts")
+        if b is None:
+            return None
+        return pick_yes == bool(b)
     if kind == "points":
         actual = row.get("actual_total")
         if actual is None or (isinstance(actual, float) and np.isnan(actual)):
@@ -230,6 +254,19 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     for kind in dict.fromkeys(kind_of.values()):
         gm = row_kinds == kind
         eval_by_group[kind] = {"table": _ladder(gm), "below": _below(gm)}
+
+    # PER-EXACT-LINE ladders + per-line recommended threshold (the user's rule,
+    # applied line by line: each market keeps the threshold that maximizes ITS
+    # holdout accuracy, n>=30; falls back to the global threshold when thin).
+    row_market = np.array([mkt_cols[i][4:] for i in hold_markets])
+    eval_by_market, threshold_by_market = {}, {}
+    for m in SPECS[league]["markets"]:
+        mm = row_market == m
+        lad = _ladder(mm)
+        eval_by_market[m] = {"table": lad, "below": _below(mm)}
+        viable_m = [t for t in lad if (t["n"] or 0) >= 30 and t["acc"] is not None]
+        threshold_by_market[m] = (max(viable_m, key=lambda t: t["acc"])["thr"]
+                                  if viable_m else rec)
     # Production = the split-trained booster + its isotonic map. (Retraining on ALL
     # data would orphan the calibration — integrity of the 🤖 probability wins.)
     imp = sorted(zip(feat_cols, booster.feature_importance("gain")),
@@ -237,6 +274,7 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     artifact = {"model_str": booster.model_to_string(), "iso": iso, "features": feat_cols,
                 "threshold": rec, "eval_table": table, "auc": auc,
                 "eval_below": _below(all_mask), "eval_by_group": eval_by_group,
+                "eval_by_market": eval_by_market, "threshold_by_market": threshold_by_market,
                 "importances": [(f, round(float(g), 1)) for f, g in imp],
                 "trained_rows": len(train), "holdout_rows": len(hold),
                 "trained_at": date.today().isoformat()}
@@ -245,6 +283,11 @@ def train_meta(league: str, config: Config | None = None) -> dict:
         pickle.dump(artifact, f)
     # League-scoped schemas (soccer) have a NOT NULL league column on snapshots.
     lg_col, lg_val = ("league, ", ":lg, ") if SPECS[league].get("league") else ("", "")
+    if SPECS[league].get("no_snapshot"):
+        logger.info("%s meta trained: auc=%s thr=%s (no snapshot table)", league, auc, rec)
+        return {"rows": len(X), "threshold": rec, "eval_table": table, "auc": auc,
+                "threshold_by_market": threshold_by_market,
+                "importances": artifact["importances"]}
     with engine.begin() as conn:
         conn.execute(text(f"""
             INSERT INTO {SPECS[league]['schema']}.calibration_snapshots
@@ -256,6 +299,7 @@ def train_meta(league: str, config: Config | None = None) -> dict:
                "rel": json.dumps(table), "thr": rec})
     logger.info("%s meta trained: auc=%s thr=%s", league, auc, rec)
     return {"rows": len(X), "threshold": rec, "eval_table": table, "auc": auc,
+            "threshold_by_market": threshold_by_market,
             "importances": artifact["importances"]}
 
 
@@ -263,7 +307,7 @@ _loaded: dict = {}
 
 
 def load_meta(league: str, cfg: Config):
-    """Cached artifact loader → (booster, features, threshold) or None."""
+    """Cached artifact loader → (booster, features, global_thr, iso, thr_by_market) or None."""
     import lightgbm as lgb
     if league in _loaded:
         return _loaded[league]
@@ -274,8 +318,18 @@ def load_meta(league: str, cfg: Config):
     with open(path, "rb") as f:
         a = pickle.load(f)
     booster = lgb.Booster(model_str=a["model_str"])
-    _loaded[league] = (booster, a["features"], a["threshold"], a.get("iso"))
+    _loaded[league] = (booster, a["features"], a["threshold"], a.get("iso"),
+                       a.get("threshold_by_market") or {})
     return _loaded[league]
+
+
+def market_threshold(league: str, cfg: Config, market: str) -> float | None:
+    """The per-line recommended threshold (falls back to the league's global)."""
+    loaded = load_meta(league, cfg)
+    if not loaded:
+        return None
+    _b, _f, global_thr, _i, by_market = loaded
+    return by_market.get(market, global_thr)
 
 
 def score_candidate(league: str, cfg: Config, row_dict: dict, market: str, p: float) -> float | None:
@@ -283,7 +337,7 @@ def score_candidate(league: str, cfg: Config, row_dict: dict, market: str, p: fl
     loaded = load_meta(league, cfg)
     if not loaded:
         return None
-    booster, feat_cols, _thr, iso = loaded
+    booster, feat_cols, _thr, iso, _by_mkt = loaded
     feats = _row_features(row_dict, SPECS[league], market, p)
     X = pd.DataFrame([feats]).reindex(columns=feat_cols)
     raw = float(booster.predict(X)[0])
@@ -333,4 +387,8 @@ def format_meta_ladder(league: str, cfg: Config | None = None) -> str | None:
                          f"{b['acc'] * 100:.0f}% ({b['correct']}/{b['n']}) — evitar")
         if len(lines) > 1:
             blocks.append("\n".join(lines))
+    by_mkt = art.get("threshold_by_market") or {}
+    if by_mkt:
+        pares = " · ".join(f"{m.replace('_', ' ')} {t:.0%}" for m, t in by_mkt.items() if t)
+        blocks.append(f"📌 Umbral recomendado POR LÍNEA (el ✅ usa este):\n  {pares}")
     return "\n\n".join(blocks) if blocks else None
