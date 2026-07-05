@@ -479,6 +479,14 @@ def format_daily_digest(config: Config | None = None) -> str:
 
 
 def notify_daily(config: Config | None = None) -> bool:
-    ok = send_telegram(format_daily_digest(config))
+    msg = format_daily_digest(config)
+    ok = send_telegram(msg)
+    # On game days, follow with the MLB-style meta-model reliability ladder
+    # (separate message so a full slate can never overflow Telegram's limit).
+    if "😴" not in msg:
+        from sandy.betmeta import format_meta_ladder
+        ladder = format_meta_ladder("nba", config or load_config())
+        if ladder:
+            send_telegram("🏀 NBA — fiabilidad del meta-modelo (histórico)\n\n" + ladder)
     logger.info("nba digest sent: %s", ok)
     return ok

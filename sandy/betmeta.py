@@ -53,7 +53,7 @@ SPECS = {
     **{
         f"soccer_{lg}": {
             "schema": "soccer", "table": "soccer.match_predictions",
-            "where": f"league = '{lg}'",
+            "where": f"league = '{lg}'", "league": lg,
             "markets": {
                 "double_chance": ("p_home_or_draw", "result", None),
                 "over_1_5": ("p_over_1_5", "goals", 1.5),
@@ -195,35 +195,63 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     iso.fit(hp_raw, hy.astype(float))
     hp = iso.predict(hp_raw)
     auc = round(float(roc_auc_score(hy, hp_raw)), 4)
-    table = []
-    for thr in THRESHOLDS:
-        m = hp >= thr
-        n = int(m.sum())
-        table.append({"thr": thr, "n": n,
-                      "acc": round(float(hy[m].mean()), 4) if n else None})
+
+    def _ladder(mask):
+        rows = []
+        for thr in THRESHOLDS:
+            m = mask & (hp >= thr)
+            n = int(m.sum())
+            rows.append({"thr": thr, "n": n, "correct": int(hy[m].sum()),
+                         "acc": round(float(hy[m].mean()), 4) if n else None})
+        return rows
+
+    all_mask = np.ones(len(hy), dtype=bool)
+    table = _ladder(all_mask)
     # The user's rule: the threshold that MAXIMIZES realized accuracy (with enough
     # holdout picks to trust the estimate).
     viable = [t for t in table if (t["n"] or 0) >= 50 and t["acc"] is not None]
     rec = max(viable, key=lambda t: t["acc"])["thr"] if viable else None
+
+    def _below(mask):
+        if rec is None:
+            return None
+        m = mask & (hp < rec)
+        n = int(m.sum())
+        return {"n": n, "correct": int(hy[m].sum()),
+                "acc": round(float(hy[m].mean()), 4) if n else None}
+
+    # Per market-group ladders (goals / corners / double-chance / winner / points)
+    # so the digest can show an MLB-style reliability block per prediction type.
+    mkt_cols = [c for c in feat_cols if c.startswith("mkt_")]
+    hold_markets = hold[mkt_cols].to_numpy().argmax(axis=1)
+    kind_of = {i: SPECS[league]["markets"][c[4:]][1] for i, c in enumerate(mkt_cols)}
+    row_kinds = np.array([kind_of[i] for i in hold_markets])
+    eval_by_group = {}
+    for kind in dict.fromkeys(kind_of.values()):
+        gm = row_kinds == kind
+        eval_by_group[kind] = {"table": _ladder(gm), "below": _below(gm)}
     # Production = the split-trained booster + its isotonic map. (Retraining on ALL
     # data would orphan the calibration — integrity of the 🤖 probability wins.)
     imp = sorted(zip(feat_cols, booster.feature_importance("gain")),
                  key=lambda x: -x[1])[:10]
     artifact = {"model_str": booster.model_to_string(), "iso": iso, "features": feat_cols,
                 "threshold": rec, "eval_table": table, "auc": auc,
+                "eval_below": _below(all_mask), "eval_by_group": eval_by_group,
                 "importances": [(f, round(float(g), 1)) for f, g in imp],
                 "trained_rows": len(train), "holdout_rows": len(hold),
                 "trained_at": date.today().isoformat()}
     path = cfg.model.model_dir / f"{league}_meta.pkl"
     with open(path, "wb") as f:
         pickle.dump(artifact, f)
+    # League-scoped schemas (soccer) have a NOT NULL league column on snapshots.
+    lg_col, lg_val = ("league, ", ":lg, ") if SPECS[league].get("league") else ("", "")
     with engine.begin() as conn:
         conn.execute(text(f"""
             INSERT INTO {SPECS[league]['schema']}.calibration_snapshots
-                (snapshot_date, market, lookback_days, sample_size, accuracy, brier,
+                (snapshot_date, {lg_col}market, lookback_days, sample_size, accuracy, brier,
                  reliability, recommended_threshold)
-            VALUES (:d, 'meta_pick', NULL, :n, :acc, NULL, :rel, :thr)
-        """), {"d": date.today(), "n": len(hold),
+            VALUES (:d, {lg_val}'meta_pick', NULL, :n, :acc, NULL, :rel, :thr)
+        """), {"d": date.today(), "n": len(hold), "lg": SPECS[league].get("league"),
                "acc": next((t["acc"] for t in table if t["thr"] == rec), None) if rec else None,
                "rel": json.dumps(table), "thr": rec})
     logger.info("%s meta trained: auc=%s thr=%s", league, auc, rec)
@@ -260,3 +288,49 @@ def score_candidate(league: str, cfg: Config, row_dict: dict, market: str, p: fl
     X = pd.DataFrame([feats]).reindex(columns=feat_cols)
     raw = float(booster.predict(X)[0])
     return float(iso.predict([raw])[0]) if iso is not None else raw
+
+
+GROUP_LABELS_ES = {
+    "result": "Doble oportunidad",
+    "goals": "Goles (más de)",
+    "corners": "Tiros de esquina (más de)",
+    "winner": "Ganador",
+    "points": "Puntos (más de)",
+}
+
+
+def format_meta_ladder(league: str, cfg: Config | None = None) -> str | None:
+    """MLB-style P(correct) reliability block, one ladder per market group.
+
+    Rendered from the holdout evaluation stored in the meta artifact, e.g.:
+        🤖 Meta-modelo — Goles (más de):
+          P(acierto) ≥70%: 82% (1029/1260)
+          P(acierto) ≥80%: 85% (713/839) ← recomendado
+          P(acierto) <80%: 64% (1071/1670) — evitar
+    """
+    cfg = cfg or load_config()
+    path = cfg.model.model_dir / f"{league}_meta.pkl"
+    if not path.exists():
+        return None
+    with open(path, "rb") as f:
+        art = pickle.load(f)
+    groups = art.get("eval_by_group")
+    rec = art.get("threshold")
+    if not groups:
+        return None
+    blocks = []
+    for kind, g in groups.items():
+        lines = [f"🤖 Meta-modelo — {GROUP_LABELS_ES.get(kind, kind)}:"]
+        for t in g["table"]:
+            if not t["n"]:
+                continue
+            mark = " ← recomendado" if rec is not None and t["thr"] == rec else ""
+            lines.append(f"  P(acierto) ≥{round(t['thr'] * 100)}%: "
+                         f"{t['acc'] * 100:.0f}% ({t['correct']}/{t['n']}){mark}")
+        b = g.get("below")
+        if b and b.get("n"):
+            lines.append(f"  P(acierto) <{round(rec * 100)}%: "
+                         f"{b['acc'] * 100:.0f}% ({b['correct']}/{b['n']}) — evitar")
+        if len(lines) > 1:
+            blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) if blocks else None

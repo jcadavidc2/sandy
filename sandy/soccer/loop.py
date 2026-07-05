@@ -409,6 +409,24 @@ def format_daily_digest(config: Config | None = None) -> str:
 
 
 def notify_daily(config: Config | None = None) -> bool:
-    ok = send_telegram(format_daily_digest(config))
+    cfg = config or load_config()
+    ok = send_telegram(format_daily_digest(cfg))
+    # One MLB-style meta-model reliability ladder per league WITH games today —
+    # separate messages so a full weekend slate can never overflow Telegram's limit.
+    from sandy.betmeta import format_meta_ladder
+    engine = create_engine(cfg)
+    today = datetime.now(DISPLAY_TZ).date()
+    with engine.begin() as conn:
+        active = {r[0] for r in conn.execute(text("""
+            SELECT DISTINCT league FROM soccer.match_predictions
+            WHERE match_date BETWEEN :a AND :b
+              AND outcome_filled_at_utc IS NULL AND NOT is_backtest
+        """), {"a": today, "b": today + timedelta(days=1)})}
+    for lg, (_code, name, flag, _m) in LEAGUES.items():
+        if lg not in active:
+            continue
+        ladder = format_meta_ladder(f"soccer_{lg}", cfg)
+        if ladder:
+            send_telegram(f"{flag} {name} — fiabilidad del meta-modelo (histórico)\n\n{ladder}")
     logger.info("soccer digest sent: %s", ok)
     return ok
