@@ -37,3 +37,6 @@ PATH=/usr/local/bin:/usr/bin:/bin:/home/ec2-user/.local/bin
 
 # Sandy dashboard (streamlit multipage, localhost:8502; VS Code port-forward or tunnel)
 @reboot sleep 30 && /home/ec2-user/sandy/scripts/dashboard.sh >> /home/ec2-user/sandy/logs/dashboard.log 2>&1
+
+# Sandy: worldcup+mlb metas + dashboard artifact refresh (6:30 AM PST)
+30 13 * * * /home/ec2-user/sandy/scripts/metas_extra_daily.sh >> /home/ec2-user/sandy/logs/metas_extra.log 2>&1
