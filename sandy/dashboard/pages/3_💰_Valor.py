@@ -25,6 +25,24 @@ st.caption("Comparamos NUESTRA probabilidad (prob del modelo base, calibrada) co
            "exacto), ganador NBA y doble oportunidad en fútbol (cuota 1X derivada por casa "
            "del moneyline a 3 vías: 1/(1/local + 1/empate)). Corners y BTTS no tienen cuotas.")
 
+with st.expander("📖 Cómo leer esta página"):
+    st.markdown("""
+- **¿Qué es el *edge*?** Cuánta más probabilidad le damos nosotros a un pick que el mercado.
+  Nosotros 69%, las casas 61% → 8 puntos de ventaja. Con edge positivo sostenido se gana
+  plata a largo plazo; sin edge, la cuota es "justa" y la casa gana por su margen.
+- **Edge prudente**: el mismo edge pero recortado 30% (le creemos 70% a nuestro modelo y 30%
+  al mercado), por si somos optimistas justo donde más discrepamos. Es el que usa el
+  🎰 Portafolio para decidir cuánto apostar.
+- **Por eso los picks "seguros" no aparecen**: un favorito obvio paga tan poquito que no deja
+  ganancia — el valor está donde el mercado subestima, no donde todo el mundo acierta.
+- **EV** = ganancia esperada por cada unidad apostada. EV +0.15 significa que apostando 100
+  veces $1.000, en promedio quedarían ~$15.000 de ganancia.
+- **Se pierde ~3 de cada 10 picks y está bien**: apostamos con ventaja, no con certeza.
+- **Lo que importa es la curva de abajo** (unidades acumuladas) y la banca del 🎰 Portafolio:
+  si suben en el tiempo, el sistema funciona. Un día suelto no dice nada.
+- **Cada día**: revisa cuántos picks tienen valor, su edge prudente, y cómo va la curva.
+""")
+
 c1, c2, c3 = st.columns([1.4, 2, 1.2])
 day = c1.date_input("Fecha", date.today(), help="HOY por defecto — cuotas del día.")
 leagues = c2.multiselect("Ligas", list(D.LEAGUES), default=list(D.LEAGUES),
@@ -55,6 +73,10 @@ if df.empty or "cuota" not in df.columns or df["cuota"].notna().sum() == 0:
 con_odds = df[df["cuota"].notna()].copy()
 for c in ("cuota", "mercado %", "edge", "EV"):
     con_odds[c] = pd.to_numeric(con_odds[c], errors="coerce")
+# edge prudente = 0.7·edge — same shrinkage the 🎰 Portafolio stakes with
+# (p_bet = 0.7·nuestra + 0.3·mercado ⇒ edge shrunk by the model weight)
+from sandy.portfolio import SHRINK_MODEL_WEIGHT
+con_odds["edge prudente"] = con_odds["edge"] * SHRINK_MODEL_WEIGHT
 valor = con_odds[con_odds["edge"].fillna(-1) >= 0.03]
 
 k1, k2, k3, k4 = st.columns(4)
@@ -67,15 +89,36 @@ k4.metric("Mejor EV", f"{best_ev:+.2f} u" if pd.notna(best_ev) else "—")
 show = (valor if solo_valor else con_odds).sort_values("EV", ascending=False)
 st.dataframe(
     show[["liga", "partido", "mercado", "pick", "nivel", "prob", "🤖",
-          "cuota", "mercado %", "edge", "EV"]],
+          "cuota", "mercado %", "edge", "edge prudente", "EV"]],
     use_container_width=True, hide_index=True,
     column_config={
-        "prob": st.column_config.NumberColumn("prob (nuestra)", format="percent"),
-        "🤖": st.column_config.NumberColumn("🤖 P(acierto)", format="percent"),
-        "cuota": st.column_config.NumberColumn("cuota", format="%.2f"),
-        "mercado %": st.column_config.NumberColumn("mercado %", format="percent"),
-        "edge": st.column_config.NumberColumn("edge", format="percent"),
-        "EV": st.column_config.NumberColumn("EV (u por 1u)", format="%.2f"),
+        "prob": st.column_config.NumberColumn(
+            "prob (nuestra)", format="percent",
+            help="La probabilidad que NUESTRO modelo le da al pick (calibrada con historia)."),
+        "🤖": st.column_config.NumberColumn(
+            "🤖 P(acierto)", format="percent",
+            help="Score del meta-modelo: qué tan confiable suele ser un pick así. "
+                 "No es lo mismo que la prob del pick."),
+        "cuota": st.column_config.NumberColumn(
+            "cuota", format="%.2f",
+            help="El mejor pago entre las casas: apostar $1.000 a cuota 1.86 devuelve "
+                 "$1.860 si acierta."),
+        "mercado %": st.column_config.NumberColumn(
+            "mercado %", format="percent",
+            help="La probabilidad que el MERCADO le da al pick, quitándole el margen de la "
+                 "casa (mediana entre casas)."),
+        "edge": st.column_config.NumberColumn(
+            "edge", format="percent",
+            help="Nuestra prob menos la del mercado. Positivo = el mercado paga de más "
+                 "según nosotros."),
+        "edge prudente": st.column_config.NumberColumn(
+            "edge prudente", format="percent",
+            help="El edge recortado 30% por respeto al mercado (70% nuestro modelo + 30% "
+                 "mercado). Con ESTE decide el 🎰 Portafolio cuánto apostar."),
+        "EV": st.column_config.NumberColumn(
+            "EV (u por 1u)", format="%.2f",
+            help="Ganancia esperada por unidad apostada: +0.15 = $150 de ganancia promedio "
+                 "por cada $1.000, a largo plazo."),
     },
 )
 if not solo_valor and valor.empty:

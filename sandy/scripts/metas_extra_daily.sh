@@ -54,6 +54,18 @@ if ! nice -n 10 .venv/bin/python -m sandy.odds daily >> logs/odds.log 2>&1; then
     tg "⚠️ Capa de cuotas/valor falló en el run de las 13:30 — reintenta sola a las 14:15 UTC"
 fi
 
+# 🎰 Settle yesterday's paper-money portfolio tickets from the reconciled
+# outcomes (the odds step above just filled value_log results) and close the
+# bankroll day: end_bank = start − staked + returned. Runs BEFORE the
+# dashboard restart so the page serves the updated curve. NON-FATAL: open
+# tickets simply wait for the next run. Logs into odds.log ('portfolio settle
+# COMPLETE') like the rest of the odds/value layer.
+echo "[$(date -Iseconds)] liquidando portafolio de papel 🎰 (tiquetes + bankroll)..."
+if ! nice -n 10 .venv/bin/python -m sandy.portfolio settle >> logs/odds.log 2>&1; then
+    echo "[$(date -Iseconds)] portfolio settle FAILED (non-fatal)" | tee -a logs/odds.log
+    tg "⚠️ La liquidación del portafolio de papel 🎰 falló — se reintenta sola mañana"
+fi
+
 echo "[$(date -Iseconds)] restarting dashboard (fresh artifacts for the webpage)..."
 PID=$(ss -tlnp 2>/dev/null | grep 8502 | grep -oP 'pid=\K[0-9]+' | head -1 || true)
 [ -n "${PID}" ] && kill "$PID" && sleep 3

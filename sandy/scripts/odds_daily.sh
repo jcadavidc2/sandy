@@ -20,3 +20,15 @@ if ! nice -n 10 .venv/bin/python -m sandy.odds daily; then
     exit 1
 fi
 echo "[$(date -Iseconds)] odds daily COMPLETE"
+
+# 🎰 Paper-money portfolio: build + persist TODAY's ticket sheet from the value
+# picks logged above (Kelly fraccional Monte Carlo, $500 steps, 30% per-game
+# cap — see sandy/portfolio.py). NON-FATAL: a failure only means no paper
+# portfolio today; odds/value/picks are unaffected. Idempotent (skips if the
+# day is already built). Prints 'portfolio build COMPLETE' into odds.log.
+echo "[$(date -Iseconds)] portfolio diario (Kelly fraccional, dinero de papel)..."
+if ! nice -n 10 .venv/bin/python -m sandy.portfolio build; then
+    echo "[$(date -Iseconds)] portfolio build FAILED (non-fatal)"
+    tg "⚠️ El portafolio de papel 🎰 falló hoy — cuotas y picks no se afectan"
+fi
+echo "[$(date -Iseconds)] portfolio daily COMPLETE"
