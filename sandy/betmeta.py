@@ -117,10 +117,12 @@ SPECS = {
         "schema": "football", "table": "football.predictions_meta",
         "markets": {
             "double_chance": ("p_home_or_draw", "result", None),
+            "over_0_5": ("p_over_0_5", "goals", 0.5),
             "over_1_5": ("p_over_1_5", "goals", 1.5),
             "over_2_5": ("p_over_2_5", "goals", 2.5),
             "over_3_5": ("p_over_3_5", "goals", 3.5),
             "over_4_5": ("p_over_4_5", "goals", 4.5),
+            "over_5_5": ("p_over_5_5", "goals", 5.5),
             "btts": ("p_btts", "btts", None),
         },
         "num_cols": ["lambda_home", "lambda_away", "atk_home", "atk_away",
