@@ -92,8 +92,9 @@ if q:
 show_mkts = sel_cols or mkt_cols
 if solo_ok:
     view = view[view[show_mkts].apply(lambda r: any("✅" in str(v) for v in r), axis=1)]
-st.dataframe(view[base_cols + show_mkts + ["resultado"]],
-             use_container_width=True, hide_index=True, height=440)
+from sandy.dashboard.filters import filter_ui
+view = filter_ui(view[base_cols + show_mkts + ["resultado"]], "games")
+st.dataframe(view, use_container_width=True, hide_index=True, height=440)
 
 with st.expander("🧠 Covariables de estos juegos"):
     days = pd.date_range(rng[0], rng[1]).date
@@ -106,6 +107,7 @@ with st.expander("🧠 Covariables de estos juegos"):
     if cov.empty:
         st.info("Sin covariables registradas en el rango.")
     else:
+        cov = filter_ui(cov, "cov")
         st.dataframe(cov, use_container_width=True, hide_index=True)
 
 # -------------------------------------------------------- Final picks per game
@@ -114,14 +116,7 @@ st.header("🏁 Picks finales (máx. 1 por juego — el mejor 🤖 entre los ✅
 if finals.empty:
     st.info("Ningún juego del rango tiene picks ✅ — así debe ser cuando el meta no ve valor.")
 else:
-    g1, g2 = st.columns([1.5, 2.5])
-    fq = g1.text_input("🔍 Equipo (picks finales)", placeholder="filtra…")
-    fmk = g2.multiselect("Mercados (picks finales)", sorted(finals["mercado"].unique()),
-                         placeholder="Todos")
-    if fq:
-        finals = finals[finals["partido"].str.contains(fq, case=False, na=False)]
-    if fmk:
-        finals = finals[finals["mercado"].isin(fmk)]
+    finals = filter_ui(finals, "finals")
     st.dataframe(finals, use_container_width=True, hide_index=True,
                  column_config={
                      "prob": st.column_config.ProgressColumn("prob", format="percent", min_value=0, max_value=1),

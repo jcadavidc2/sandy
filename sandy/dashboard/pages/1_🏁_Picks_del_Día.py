@@ -45,23 +45,8 @@ if not frames:
 df = pd.concat(frames, ignore_index=True)
 df = df[df["🤖"] >= min_meta].sort_values("🤖", ascending=False).reset_index(drop=True)
 
-# Column filters
-f1, f2, f3 = st.columns([1.5, 2, 1.2])
-q = f1.text_input("🔍 Equipo", placeholder="ej. Nacional, NYY, Madrid…")
-mercados = f2.multiselect("Mercados", sorted(df["mercado"].unique()), placeholder="Todos")
-lado = f3.selectbox("Pick", ["Todos", "Más de…", "Menos de…", "1X / Local", "2 / Visitante"])
-if q:
-    df = df[df["partido"].str.contains(q, case=False, na=False)]
-if mercados:
-    df = df[df["mercado"].isin(mercados)]
-if lado == "Más de…":
-    df = df[df["pick"].str.startswith("Más")]
-elif lado == "Menos de…":
-    df = df[df["pick"].str.startswith("Menos")]
-elif lado == "1X / Local":
-    df = df[df["pick"].str.contains("1X|local", case=False)]
-elif lado == "2 / Visitante":
-    df = df[df["pick"].str.contains("visitante", case=False)]
+from sandy.dashboard.filters import filter_ui
+df = filter_ui(df, "picks", skip=("umbral",))
 
 pend = df[df["acertó"] == "—"]
 played = df[df["acertó"] != "—"]
