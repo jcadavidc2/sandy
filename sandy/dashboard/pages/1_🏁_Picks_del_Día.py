@@ -45,23 +45,6 @@ if not frames:
 df = pd.concat(frames, ignore_index=True)
 df = df[df["🤖"] >= min_meta].sort_values("🤖", ascending=False).reset_index(drop=True)
 
-# Column filters
-f1, f2, f3 = st.columns([1.5, 2, 1.2])
-q = f1.text_input("🔍 Equipo", placeholder="ej. Nacional, NYY, Madrid…")
-mercados = f2.multiselect("Mercados", sorted(df["mercado"].unique()), placeholder="Todos")
-lado = f3.selectbox("Pick", ["Todos", "Más de…", "Menos de…", "1X / Local", "2 / Visitante"])
-if q:
-    df = df[df["partido"].str.contains(q, case=False, na=False)]
-if mercados:
-    df = df[df["mercado"].isin(mercados)]
-if lado == "Más de…":
-    df = df[df["pick"].str.startswith("Más")]
-elif lado == "Menos de…":
-    df = df[df["pick"].str.startswith("Menos")]
-elif lado == "1X / Local":
-    df = df[df["pick"].str.contains("1X|local", case=False)]
-elif lado == "2 / Visitante":
-    df = df[df["pick"].str.contains("visitante", case=False)]
 
 pend = df[df["acertó"] == "—"]
 played = df[df["acertó"] != "—"]
@@ -73,16 +56,8 @@ if len(played):
     k4.metric("Acierto (jugados)",
               f"{(played['acertó'] == '✓').mean():.0%} ({(played['acertó'] == '✓').sum()}/{len(played)})")
 
-st.dataframe(
-    df[["liga", "fecha", "partido", "mercado", "pick", "prob", "🤖", "umbral",
-        "acierto_hist", "resultado", "acertó"]],
-    use_container_width=True, hide_index=True, height=520,
-    column_config={
-        "prob": st.column_config.ProgressColumn("prob", format="percent", min_value=0, max_value=1),
-        "🤖": st.column_config.ProgressColumn("🤖 P(acierto)", format="percent", min_value=0, max_value=1),
-        "umbral": st.column_config.NumberColumn("umbral línea", format="percent"),
-        "acierto_hist": st.column_config.NumberColumn("acierto @Th", format="percent"),
-    },
-)
+from sandy.dashboard import grid
+grid.show(df[["liga", "fecha", "partido", "mercado", "pick", "prob", "🤖", "umbral",
+              "acierto_hist", "resultado", "acertó"]], key="picks", height=520)
 st.download_button("⬇️ Descargar picks (CSV)", df.to_csv(index=False).encode(),
                    "sandy_picks_finales.csv", "text/csv")
