@@ -42,10 +42,13 @@ def _candidates(reliability: dict, r) -> list[dict]:
     return out
 
 
-def _pending_rows(conn, day: date):
-    return conn.execute(text("""
+def _pending_rows(conn, day: date, sim: bool = False):
+    # sim=True renders a historical day from the walk-forward backtest rows —
+    # the leakage-free predictions the model actually would have made that day.
+    cond = "is_backtest" if sim else "outcome_filled_at_utc IS NULL AND NOT is_backtest"
+    return conn.execute(text(f"""
         SELECT * FROM mls.match_predictions
-        WHERE match_date BETWEEN :a AND :b AND outcome_filled_at_utc IS NULL AND NOT is_backtest
+        WHERE match_date BETWEEN :a AND :b AND {cond}
         ORDER BY match_date, id
     """), {"a": day, "b": day + timedelta(days=1)}).fetchall()
 
@@ -53,17 +56,19 @@ def _pending_rows(conn, day: date):
 def format_daily_digest(config: Config | None = None, *, for_date: date | None = None) -> str:
     cfg = config or load_config()
     engine = create_engine(cfg)
+    sim = for_date is not None
     today = for_date or datetime.now(DISPLAY_TZ).date()
     parts = [f"⚽ MLS ({today.strftime('%b %d')})"]
     with engine.begin() as conn:
         reliability = load_reliability(conn, "mls")
 
         # Last night, scored.
-        night = conn.execute(text("""
+        night = conn.execute(text(f"""
             SELECT home_team, away_team, actual_home_goals, actual_away_goals,
                    actual_total_corners, was_correct_double_chance
             FROM mls.match_predictions
-            WHERE match_date = :d AND outcome_filled_at_utc IS NOT NULL AND NOT is_backtest
+            WHERE match_date = :d AND outcome_filled_at_utc IS NOT NULL
+              AND {"is_backtest" if sim else "NOT is_backtest"}
             ORDER BY id LIMIT 8
         """), {"d": today - timedelta(days=1)}).fetchall()
         if night:
@@ -75,7 +80,7 @@ def format_daily_digest(config: Config | None = None, *, for_date: date | None =
                 parts.append(f"{mark} {r.home_team} {r.actual_home_goals}-{r.actual_away_goals} {r.away_team}{cor}")
             parts.append("")
 
-        rows = _pending_rows(conn, today)
+        rows = _pending_rows(conn, today, sim)
         if not rows:
             parts.append("😴 No hay partidos MLS hoy.")
         else:

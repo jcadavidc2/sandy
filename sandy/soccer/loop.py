@@ -338,11 +338,12 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14) -> dict:
 
 
 # ------------------------------ digest --------------------------------------
-def format_daily_digest(config: Config | None = None) -> str:
+def format_daily_digest(config: Config | None = None, *, for_date: date | None = None) -> str:
     from sandy.mls.recommend import evaluate, meta_gate
     cfg = config or load_config()
     engine = create_engine(cfg)
-    today = datetime.now(DISPLAY_TZ).date()
+    sim = for_date is not None  # render a historical day from backtest rows
+    today = for_date or datetime.now(DISPLAY_TZ).date()
     parts = [f"🌍 Fútbol Ligas ({today.strftime('%b %d')})"]
     any_games = False
     with engine.begin() as conn:
@@ -352,17 +353,17 @@ def format_daily_digest(config: Config | None = None) -> str:
                 WHERE league = :lg ORDER BY market, created_at DESC
             """), {"lg": lg}).fetchall()
             reliability = {m: (r if isinstance(r, list) else json.loads(r)) for m, r in rel_rows}
-            rows = conn.execute(text("""
+            rows = conn.execute(text(f"""
                 SELECT * FROM soccer.match_predictions
                 WHERE league = :lg AND match_date BETWEEN :a AND :b
-                  AND outcome_filled_at_utc IS NULL AND NOT is_backtest
+                  AND {"is_backtest" if sim else "outcome_filled_at_utc IS NULL AND NOT is_backtest"}
                 ORDER BY match_date, id
             """), {"lg": lg, "a": today, "b": today + timedelta(days=1)}).fetchall()
-            night = conn.execute(text("""
+            night = conn.execute(text(f"""
                 SELECT home_team, away_team, actual_home_goals, actual_away_goals, was_correct_double_chance
                 FROM soccer.match_predictions
                 WHERE league = :lg AND match_date = :d AND outcome_filled_at_utc IS NOT NULL
-                  AND NOT is_backtest ORDER BY id LIMIT 6
+                  AND {"is_backtest" if sim else "NOT is_backtest"} ORDER BY id LIMIT 6
             """), {"lg": lg, "d": today - timedelta(days=1)}).fetchall()
             if not rows and not night:
                 continue

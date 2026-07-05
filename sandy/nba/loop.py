@@ -415,27 +415,30 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14) -> dict:
 
 
 # ------------------------------- digest ------------------------------------
-def format_daily_digest(config: Config | None = None) -> str:
+def format_daily_digest(config: Config | None = None, *, for_date: date | None = None) -> str:
     from sandy.mls.recommend import evaluate, load_reliability, meta_gate
     cfg = config or load_config()
     engine = create_engine(cfg)
-    today = datetime.now(DISPLAY_TZ).date()
+    sim = for_date is not None  # render a historical day from backtest rows
+    today = for_date or datetime.now(DISPLAY_TZ).date()
     parts = [f"🏀 NBA ({today.strftime('%b %d')})"]
     with engine.begin() as conn:
         reliability = load_reliability(conn, "nba")
-        night = conn.execute(text("""
+        night = conn.execute(text(f"""
             SELECT home_team, away_team, actual_home_points, actual_away_points, was_correct_over_225_5
             FROM nba.game_predictions
-            WHERE match_date = :d AND outcome_filled_at_utc IS NOT NULL AND NOT is_backtest
+            WHERE match_date = :d AND outcome_filled_at_utc IS NOT NULL
+              AND {"is_backtest" if sim else "NOT is_backtest"}
             ORDER BY id LIMIT 10
         """), {"d": today - timedelta(days=1)}).fetchall()
         if night:
             hits = sum(1 for r in night if r.was_correct_over_225_5)
             parts.append(f"🌙 Anoche O225.5: {hits}/{len(night)} · " + " · ".join(
                 f"{r.home_team} {r.actual_home_points}-{r.actual_away_points} {r.away_team}" for r in night[:5]))
-        rows = conn.execute(text("""
+        rows = conn.execute(text(f"""
             SELECT * FROM nba.game_predictions
-            WHERE match_date BETWEEN :a AND :b AND outcome_filled_at_utc IS NULL AND NOT is_backtest
+            WHERE match_date BETWEEN :a AND :b
+              AND {"is_backtest" if sim else "outcome_filled_at_utc IS NULL AND NOT is_backtest"}
             ORDER BY match_date, id
         """), {"a": today, "b": today + timedelta(days=1)}).fetchall()
         parts.append("")
