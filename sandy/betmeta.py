@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 MIN_TRAIN_ROWS = 800
 THRESHOLDS = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]
 
+# "Model's own recent errors" covariates: per team, the mean SIGNED and mean
+# ABSOLUTE error of the base model's TOTAL prediction over that team's last
+# ERR_WINDOW reconciled games STRICTLY BEFORE the row's match_date.
+# Signed-error convention everywhere: EXPECTED minus ACTUAL (positive = the
+# base model overshot the total). NaN when the team has no prior history.
+ERR_WINDOW = 8
+MODEL_ERR_FEATURES = ("h_model_err", "h_model_abs_err", "a_model_err", "a_model_abs_err")
+
 # league → (schema, predictions table, markets: name → (prob col, kind, line))
 SPECS = {
     "mls": {
@@ -52,6 +60,7 @@ SPECS = {
         "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"],
         "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
                       "form_points_5", "rest_days", "played_10"],
+        "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
     },
     # Multi-league soccer vertical: one meta per league, rows filtered by league.
     **{
@@ -76,6 +85,7 @@ SPECS = {
             "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"],
             "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
                           "form_points_5", "rest_days", "played_10"],
+            "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
         }
         for lg in ("col", "mex", "esp", "eng")
     },
@@ -94,6 +104,7 @@ SPECS = {
         },
         "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win"],
         "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
+        "err_expected": ["exp_total"], "err_actual": "actual_total",
     },
     "nhl": {
         "schema": "nhl", "table": "nhl.game_predictions",
@@ -108,6 +119,7 @@ SPECS = {
         },
         "num_cols": ["lambda_home", "lambda_away"],
         "form_keys": ["gf_5", "ga_5", "gf_10", "ga_10", "points_10", "rest_days", "played_10"],
+        "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
     },
     # World Cup / national teams: no corners in the data source; covariates are the
     # DC model factors, surfaced as columns by the football.predictions_meta view.
@@ -128,6 +140,7 @@ SPECS = {
         "num_cols": ["lambda_home", "lambda_away", "atk_home", "atk_away",
                      "def_home", "def_away", "home_adv"],
         "form_keys": [],
+        "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
         "no_snapshot": True, "no_backtest_col": True, "no_hist_gate": True,
     },
     # MLB totals (the original over/under vertical): per-line meta over the
@@ -149,6 +162,8 @@ SPECS = {
                      "away_trailing15_rpg", "home_expected_runs", "away_expected_runs",
                      "sigma_used"],
         "form_keys": [],
+        "err_expected": ["home_expected_runs", "away_expected_runs"],
+        "err_actual": "actual_total_runs",
         "no_snapshot": True, "no_backtest_col": True,
     },
 }
@@ -187,7 +202,113 @@ def _correct(row, kind: str, line: float | None, p: float) -> bool | None:
     return pick_yes == (actual > line)
 
 
-def _row_features(row, spec, market, p) -> dict:
+def _attach_model_err(df: pd.DataFrame, spec: dict) -> pd.DataFrame:
+    """Bulk path for the MODEL_ERR_FEATURES covariates over a reconciled frame.
+
+    For each game row: h_model_err / h_model_abs_err = mean signed / absolute
+    error (EXPECTED minus ACTUAL total) of the base model over the HOME team's
+    last ERR_WINDOW reconciled games strictly before the row's match_date
+    (same-date games excluded); a_* likewise for the away team. Window ordering
+    is (match_date, id) ascending, take the trailing 8 — exactly the set that
+    _team_recent_err's `ORDER BY match_date DESC, id DESC LIMIT 8` selects, so
+    the two code paths are value-identical. Leakage-safe: the row's own game
+    (and any same-date game) never contributes to its own features.
+    """
+    df = df.copy()
+    if df.empty:
+        for c in MODEL_ERR_FEATURES:
+            df[c] = np.nan
+        return df
+    expected = df[spec["err_expected"]].sum(axis=1, min_count=len(spec["err_expected"]))
+    err = expected - pd.to_numeric(df[spec["err_actual"]], errors="coerce")
+    hist_src = pd.DataFrame({"date": df["match_date"], "id": df["id"],
+                             "home": df["home_team"], "away": df["away_team"], "err": err})
+    hist_src = hist_src[hist_src["err"].notna()].sort_values(["date", "id"], kind="mergesort")
+    hist: dict[str, tuple[list, list]] = {}  # team -> ([dates asc], [errs, (date,id) asc])
+    for d, h, a, e in zip(hist_src["date"], hist_src["home"], hist_src["away"], hist_src["err"]):
+        for team in (h, a):
+            dates, errs = hist.setdefault(team, ([], []))
+            dates.append(d)
+            errs.append(float(e))
+    from bisect import bisect_left
+
+    def _pair(team, d):
+        dv = hist.get(team)
+        if not dv:
+            return np.nan, np.nan
+        dates, errs = dv
+        i = bisect_left(dates, d)  # strictly-before cut (ties on date excluded)
+        w = errs[max(0, i - ERR_WINDOW):i]
+        if not w:
+            return np.nan, np.nan
+        arr = np.asarray(w)
+        return float(arr.mean()), float(np.abs(arr).mean())
+
+    cols = {c: [] for c in MODEL_ERR_FEATURES}
+    for d, h, a in zip(df["match_date"], df["home_team"], df["away_team"]):
+        he, ha = _pair(h, d)
+        ae, aa = _pair(a, d)
+        cols["h_model_err"].append(he)
+        cols["h_model_abs_err"].append(ha)
+        cols["a_model_err"].append(ae)
+        cols["a_model_abs_err"].append(aa)
+    for c, v in cols.items():
+        df[c] = v
+    return df
+
+
+_err_cache: dict = {}
+_err_engine = None
+
+
+def _team_recent_err(league: str, cfg: Config, team, match_date) -> tuple[float, float]:
+    """Single-row (live) path for the model-error covariates: (mean signed,
+    mean absolute) EXPECTED-minus-ACTUAL error over *team*'s last ERR_WINDOW
+    reconciled games strictly before *match_date*; (nan, nan) with no history.
+    Cached per (league, team, date) — at most 2 queries per live game.
+    Must stay value-identical with _attach_model_err (audited at review time
+    over random historical rows)."""
+    global _err_engine
+    key = (league, str(team), str(match_date))
+    if key in _err_cache:
+        return _err_cache[key]
+    spec = SPECS[league]
+    # Fetch raw columns and subtract in PYTHON (float64), not in SQL: several
+    # columns are float4 in Postgres and server-side arithmetic would round
+    # differently from the pandas bulk path — this keeps both bit-identical.
+    sel_cols = ", ".join(spec["err_expected"] + [spec["err_actual"]])
+    exp_not_null = " AND ".join(f"{c} IS NOT NULL" for c in spec["err_expected"])
+    extra = f" AND {spec['where']}" if spec.get("where") else ""
+    if _err_engine is None:
+        _err_engine = create_engine(cfg)
+    with _err_engine.begin() as conn:
+        rows = conn.execute(text(f"""
+            SELECT {sel_cols}
+            FROM {spec['table']}
+            WHERE outcome_filled_at_utc IS NOT NULL
+              AND {exp_not_null} AND {spec['err_actual']} IS NOT NULL
+              AND (home_team = :t OR away_team = :t)
+              AND match_date < :d{extra}
+            ORDER BY match_date DESC, id DESC
+            LIMIT :n
+        """), {"t": team, "d": match_date, "n": ERR_WINDOW}).fetchall()
+    errs = []
+    for r in rows:
+        exp = float(r[0])
+        for v in r[1:-1]:
+            exp += float(v)
+        errs.append(exp - float(r[-1]))
+    if errs:
+        arr = np.asarray(errs)
+        out = (float(arr.mean()), float(np.abs(arr).mean()))
+    else:
+        out = (float("nan"), float("nan"))
+    _err_cache[key] = out
+    return out
+
+
+def _row_features(row, spec, market, p, league: str | None = None,
+                  cfg: Config | None = None) -> dict:
     feats = row.get("features")
     if isinstance(feats, str):
         try:
@@ -203,6 +324,21 @@ def _row_features(row, spec, market, p) -> dict:
         hv, av = home.get(k), away.get(k)
         out[f"h_{k}"] = float(hv) if isinstance(hv, (int, float)) else np.nan
         out[f"a_{k}"] = float(av) if isinstance(av, (int, float)) else np.nan
+    # Model's-own-recent-errors covariates: bulk-attached upstream when present
+    # (_attach_model_err on training/dashboard frames); live rows straight off
+    # the DB lack them → cached single-row lookup, identical by construction.
+    if all(k in row for k in MODEL_ERR_FEATURES):
+        for k in MODEL_ERR_FEATURES:
+            v = row.get(k)
+            out[k] = float(v) if v is not None else np.nan
+    elif league is not None and cfg is not None:
+        he, ha = _team_recent_err(league, cfg, row.get("home_team"), row.get("match_date"))
+        ae, aa = _team_recent_err(league, cfg, row.get("away_team"), row.get("match_date"))
+        out["h_model_err"], out["h_model_abs_err"] = he, ha
+        out["a_model_err"], out["a_model_abs_err"] = ae, aa
+    else:
+        for k in MODEL_ERR_FEATURES:
+            out[k] = np.nan
     for m in spec["markets"]:
         out[f"mkt_{m}"] = 1.0 if m == market else 0.0
     return out
@@ -214,6 +350,7 @@ def _frame(engine, league: str) -> pd.DataFrame:
     with engine.begin() as conn:
         df = pd.read_sql(text(
             f"SELECT * FROM {spec['table']} WHERE outcome_filled_at_utc IS NOT NULL{extra}"), conn)
+    df = _attach_model_err(df, spec)
     rows, ys, dates = [], [], []
     for _, r in df.iterrows():
         rd = r.to_dict()
@@ -263,18 +400,30 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     calib = X[(X["_date"] > c1) & (X["_date"] <= c2)]
     test = X[X["_date"] > c2]
     feat_cols = [c for c in X.columns if c not in ("_y", "_date")]
-    params = dict(objective="binary", learning_rate=0.05, num_leaves=31,
-                  min_data_in_leaf=40, feature_fraction=0.85, bagging_fraction=0.85,
-                  bagging_freq=1, verbose=-1, seed=42)
-    booster = lgb.train(params, lgb.Dataset(train[feat_cols], label=train["_y"]),
-                        num_boost_round=500,
-                        valid_sets=[lgb.Dataset(calib[feat_cols], label=calib["_y"])],
-                        callbacks=[lgb.early_stopping(50, verbose=False)])
     from sklearn.isotonic import IsotonicRegression
     from sklearn.metrics import roc_auc_score
+    # P(correct) must be non-decreasing in the pick's own confidence.
+    mono = [1 if c == "conf" else 0 for c in feat_cols]
+    base_params = dict(objective="binary", feature_fraction=0.85, bagging_fraction=0.85,
+                       bagging_freq=1, verbose=-1, seed=42, monotone_constraints=mono)
+    # Small honest grid, selected on CALIB AUC only — test stays untouched by
+    # every choice (booster, hyperparams, isotonic, thresholds all come from
+    # train+calib; test is evaluated exactly once, below).
+    cy = calib["_y"].to_numpy()
+    booster, chosen, calib_auc = None, None, -1.0
+    for hp in [dict(learning_rate=lr, num_leaves=nl, min_data_in_leaf=mdl)
+               for lr in (0.05, 0.03) for nl in (15, 31) for mdl in (40, 100)]:
+        b = lgb.train({**base_params, **hp},
+                      lgb.Dataset(train[feat_cols], label=train["_y"]),
+                      num_boost_round=500,
+                      valid_sets=[lgb.Dataset(calib[feat_cols], label=calib["_y"])],
+                      callbacks=[lgb.early_stopping(50, verbose=False)])
+        cauc = float(roc_auc_score(
+            cy, b.predict(calib[feat_cols], num_iteration=b.best_iteration)))
+        if cauc > calib_auc:
+            booster, chosen, calib_auc = b, hp, cauc
     # Isotonic fitted on CALIB (booster never trained on it)…
     cp_raw = booster.predict(calib[feat_cols], num_iteration=booster.best_iteration)
-    cy = calib["_y"].to_numpy()
     iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
     iso.fit(cp_raw, cy.astype(float))
     cp = iso.predict(cp_raw)
@@ -344,6 +493,7 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     artifact = {"model_str": booster.model_to_string(num_iteration=booster.best_iteration),
                 "iso": iso, "features": feat_cols,
                 "threshold": rec, "eval_table": table, "auc": auc,
+                "calib_auc": round(calib_auc, 4), "params": chosen,
                 "eval_below": _below(all_mask), "eval_by_group": eval_by_group,
                 "eval_by_market": eval_by_market, "threshold_by_market": threshold_by_market,
                 "importances": [(f, round(float(g), 1)) for f, g in imp],
@@ -356,8 +506,10 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     # League-scoped schemas (soccer) have a NOT NULL league column on snapshots.
     lg_col, lg_val = ("league, ", ":lg, ") if SPECS[league].get("league") else ("", "")
     if SPECS[league].get("no_snapshot"):
-        logger.info("%s meta trained: auc=%s thr=%s (no snapshot table)", league, auc, rec)
+        logger.info("%s meta trained: auc=%s thr=%s params=%s (no snapshot table)",
+                    league, auc, rec, chosen)
         return {"rows": len(X), "threshold": rec, "eval_table": table, "auc": auc,
+                "calib_auc": round(calib_auc, 4), "params": chosen,
                 "threshold_by_market": threshold_by_market,
                 "importances": artifact["importances"]}
     with engine.begin() as conn:
@@ -369,8 +521,9 @@ def train_meta(league: str, config: Config | None = None) -> dict:
         """), {"d": date.today(), "n": len(hold), "lg": SPECS[league].get("league"),
                "acc": next((t["acc"] for t in table if t["thr"] == rec), None) if rec else None,
                "rel": json.dumps(table), "thr": rec})
-    logger.info("%s meta trained: auc=%s thr=%s", league, auc, rec)
+    logger.info("%s meta trained: auc=%s thr=%s params=%s", league, auc, rec, chosen)
     return {"rows": len(X), "threshold": rec, "eval_table": table, "auc": auc,
+            "calib_auc": round(calib_auc, 4), "params": chosen,
             "threshold_by_market": threshold_by_market,
             "importances": artifact["importances"]}
 
@@ -410,7 +563,7 @@ def score_candidate(league: str, cfg: Config, row_dict: dict, market: str, p: fl
     if not loaded:
         return None
     booster, feat_cols, _thr, iso, _by_mkt = loaded
-    feats = _row_features(row_dict, SPECS[league], market, p)
+    feats = _row_features(row_dict, SPECS[league], market, p, league=league, cfg=cfg)
     X = pd.DataFrame([feats]).reindex(columns=feat_cols)
     raw = float(booster.predict(X)[0])
     return float(iso.predict([raw])[0]) if iso is not None else raw

@@ -10,7 +10,7 @@ from datetime import date, timedelta
 import pandas as pd
 from sqlalchemy import text
 
-from sandy.betmeta import SPECS, _correct, _row_features, load_meta
+from sandy.betmeta import SPECS, _attach_model_err, _correct, _row_features, load_meta
 from sandy.config import load_config
 from sandy.db import create_engine
 from sandy.mls.recommend import RECOMMEND_MIN_ACC, RECOMMEND_MIN_N, bucket_acc
@@ -107,6 +107,10 @@ def scored_results(league: str) -> pd.DataFrame:
         df = pd.read_sql(text(
             f"SELECT * FROM {spec['table']} WHERE outcome_filled_at_utc IS NOT NULL{extra}"
         ), conn)
+    # Same bulk model-error covariates as train_meta's _frame — keeps the meta
+    # scores here identical to what the artifact saw in training (the raw rd
+    # dicts alone lack these columns).
+    df = _attach_model_err(df, spec)
     out, feat_rows = [], []
     for _, r in df.iterrows():
         rd = r.to_dict()
@@ -327,6 +331,8 @@ COVARIATE_LABELS = {
     "exp_home_points": "Puntos esperados local", "exp_away_points": "Puntos esperados visitante",
     "exp_total": "Total esperado", "sigma_total": "σ total", "p_home_win": "P(gana local)",
     "p": "Prob. del modelo", "conf": "Confianza",
+    "model_err": "Error medio del modelo (últ. 8)",
+    "model_abs_err": "Error abs. medio del modelo (últ. 8)",
 }
 
 
