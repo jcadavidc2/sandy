@@ -23,9 +23,10 @@ min_meta = c3.slider("🤖 mínimo", 0.5, 0.99, 0.5, 0.01,
                      help="Sube esto para quedarte solo con la crema del día.")
 solo_mejor = c4.toggle("Solo el mejor por juego", value=True,
                        help="Apagado = TODOS los picks ✅ (un juego puede tener varios).")
-nivel_sel = st.radio("Nivel", ["Todas ✅", "⭐ 🤖 ≥ 90% (~94-95% real)", "💎 🤖 ≥ 95% (~95-96% real)"],
+nivel_sel = st.radio("Nivel", ["Todas ✅", "⭐ élite (~94-95% real)", "💎 máxima (~95-96% real)"],
                      horizontal=True,
-                     help="Niveles validados en la ventana de test intocada, agrupando las 9 ligas.")
+                     help="Motor híbrido: cada nivel usa el motor ganador (meta-umbral o refinador meta²), "
+                          "elegido cada noche en datos de calibración y validado en test intocado.")
 if len(rng) != 2:
     st.stop()
 

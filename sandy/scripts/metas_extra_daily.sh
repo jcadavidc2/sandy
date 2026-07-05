@@ -22,6 +22,27 @@ for lg in ("worldcup", "mlb"):
     print(f"{lg}: rows={r['rows']} thr={r['threshold']} auc={r['auc']}")
 PY
 
+# Meta² refiner: nightly retrain (10-block OOF, cached per league by data
+# signature) + the adaptive-hybrid engine choice per tier (calib matched-volume
+# vs meta floors, one-way test clamp). NON-FATAL by design: on any failure the
+# ⭐/💎 levels keep serving plain meta floors (nivel_for_pick falls back on its
+# own; an artifact >10 days old is ignored), so metas + dashboard refresh still
+# run. Takes ~20-45 min on nights when league data changed (sequential, nice'd).
+echo "[$(date -Iseconds)] retraining meta² refiner + choosing tier engines..."
+if ! nice -n 10 .venv/bin/python - <<'PY'
+import json
+from sandy.betrefine import train_refiner, choose_engines
+rep = train_refiner()
+print("refiner:", json.dumps({k: rep[k] for k in ("n_dataset", "calib_auc", "test_auc", "floors")},
+                             default=str))
+ch = choose_engines()
+print("engines:", json.dumps(ch.get("engines"), default=str))
+print("hybrid vs meta (test):", json.dumps(ch.get("hybrid_test_report"), default=str))
+PY
+then
+    tg "⚠️ Refinador meta² falló hoy — los niveles ⭐/💎 siguen con umbrales del meta (fallback automático)"
+fi
+
 echo "[$(date -Iseconds)] restarting dashboard (fresh artifacts for the webpage)..."
 PID=$(ss -tlnp 2>/dev/null | grep 8502 | grep -oP 'pid=\K[0-9]+' | head -1 || true)
 [ -n "${PID}" ] && kill "$PID" && sleep 3

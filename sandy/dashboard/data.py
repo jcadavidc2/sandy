@@ -246,6 +246,7 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
     thr_by = art.get("threshold_by_market") or {}
     global_thr = art.get("threshold")
     from sandy.betmeta import score_candidate
+    from sandy.betrefine import nivel_for_pick
     with engine.begin() as conn:
         rows = conn.execute(text(f"""
             SELECT * FROM {spec['table']}
@@ -283,7 +284,9 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
                 res_str = _actual_str(rd, kind)
             if ok:
                 yes, no = _pick_labels(kind, line)
-                nivel = "💎" if (mp or 0) >= 0.95 else ("⭐" if (mp or 0) >= 0.90 else "✅")
+                # adaptive hybrid: per-tier engine (refiner or meta floors),
+                # chosen nightly on calib — falls back to meta floors on its own
+                nivel = nivel_for_pick(league, rd, market, p, mp, cfg)
                 pick_row = {"nivel": nivel,
                             "fecha": rd["match_date"], "partido": f"{base['local']} vs {base['visitante']}",
                             "mercado": market_label(market, kind), "pick": yes if p >= 0.5 else no,

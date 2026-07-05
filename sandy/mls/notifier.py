@@ -87,6 +87,7 @@ def format_daily_digest(config: Config | None = None, *, for_date: date | None =
         else:
             # 🎯 The tip sheet: every calibrated-trustworthy bet, best first.
             from .recommend import meta_gate
+            from sandy.betrefine import star_for_candidate
             recs = []
             for r in rows:
                 for c in meta_gate("mls", cfg, r, _candidates(reliability, r)):
@@ -96,7 +97,7 @@ def format_daily_digest(config: Config | None = None, *, for_date: date | None =
                 parts.append("🎯 APUESTAS RECOMENDADAS (filtro meta-modelo):")
                 for r, c in recs[:8]:
                     meta = f" · 🤖 {c['meta']:.0%}" if c.get("meta") is not None else ""
-                    star = "💎 " if (c.get("meta") or 0) >= 0.95 else ("⭐ " if (c.get("meta") or 0) >= 0.90 else "")
+                    star = star_for_candidate("mls", cfg, r, c)
                     parts.append(f"• {star}{r.home_team} vs {r.away_team} → {c['label']} "
                                  f"({c['conf']:.0%}) · histórico {c['hist_acc']:.0%}{meta}")
             else:

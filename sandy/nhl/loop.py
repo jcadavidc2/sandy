@@ -233,9 +233,10 @@ def format_daily_digest(config: Config | None = None, *, for_date: date | None =
             recs.sort(key=lambda x: (-x[1].get("meta", 0), -x[1]["hist_acc"], -x[1]["conf"]))
             if recs:
                 parts.append("🎯 APUESTAS RECOMENDADAS (filtro meta-modelo):")
+                from sandy.betrefine import star_for_candidate
                 for r, c in recs[:8]:
                     meta = f" · 🤖 {c['meta']:.0%}" if c.get("meta") is not None else ""
-                    star = "💎 " if (c.get("meta") or 0) >= 0.95 else ("⭐ " if (c.get("meta") or 0) >= 0.90 else "")
+                    star = star_for_candidate("nhl", cfg, r, c)
                     parts.append(f"• {star}{r.home_team} vs {r.away_team} → {c['label']} "
                                  f"({c['conf']:.0%}) · histórico {c['hist_acc']:.0%}{meta}")
             else:

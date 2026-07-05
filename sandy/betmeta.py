@@ -346,16 +346,16 @@ def _row_features(row, spec, market, p, league: str | None = None,
 
 def _frame(engine, league: str, with_ids: bool = False) -> pd.DataFrame:
     """One row per (reconciled game × market) with the meta features + _y/_date.
-    with_ids=True additionally keeps _game_id/_market bookkeeping columns
-    (used by betrefine's OOF pipeline; train_meta never passes it, so its
-    feat_cols stay unchanged)."""
+    with_ids=True additionally keeps _game_id/_market/_home/_away bookkeeping
+    columns (used by betrefine's OOF pipeline; train_meta never passes it, so
+    its feat_cols stay unchanged)."""
     spec = SPECS[league]
     extra = f" AND {spec['where']}" if spec.get("where") else ""
     with engine.begin() as conn:
         df = pd.read_sql(text(
             f"SELECT * FROM {spec['table']} WHERE outcome_filled_at_utc IS NOT NULL{extra}"), conn)
     df = _attach_model_err(df, spec)
-    rows, ys, dates, gids, mkts = [], [], [], [], []
+    rows, ys, dates, gids, mkts, homes, aways = [], [], [], [], [], [], []
     for _, r in df.iterrows():
         rd = r.to_dict()
         for market, (pcol, kind, line) in spec["markets"].items():
@@ -371,12 +371,16 @@ def _frame(engine, league: str, with_ids: bool = False) -> pd.DataFrame:
             if with_ids:
                 gids.append(rd["id"])
                 mkts.append(market)
+                homes.append(rd.get("home_team"))
+                aways.append(rd.get("away_team"))
     X = pd.DataFrame(rows)
     X["_y"] = ys
     X["_date"] = dates
     if with_ids:
         X["_game_id"] = gids
         X["_market"] = mkts
+        X["_home"] = homes
+        X["_away"] = aways
     return X
 
 
