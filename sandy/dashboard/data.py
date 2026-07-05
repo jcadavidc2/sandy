@@ -1,0 +1,315 @@
+"""Data layer for the Sandy dashboard — plain pandas/SQL, no streamlit imports.
+
+Every function creates its own engine (cheap) so the streamlit app can wrap
+them with st.cache_data keyed on the plain-value arguments.
+"""
+from __future__ import annotations
+
+from datetime import date, timedelta
+
+import pandas as pd
+from sqlalchemy import text
+
+from sandy.betmeta import SPECS, _correct, _row_features, load_meta
+from sandy.config import load_config
+from sandy.db import create_engine
+from sandy.mls.recommend import RECOMMEND_MIN_ACC, RECOMMEND_MIN_N, bucket_acc
+
+LEAGUES = {
+    "soccer_col": ("🇨🇴", "Liga Colombia"),
+    "soccer_mex": ("🇲🇽", "Liga MX"),
+    "soccer_esp": ("🇪🇸", "La Liga"),
+    "soccer_eng": ("🏴", "Premier League"),
+    "mls": ("⚽", "MLS"),
+    "nhl": ("🏒", "NHL"),
+    "nba": ("🏀", "NBA"),
+}
+
+
+def league_title(key: str) -> str:
+    flag, name = LEAGUES[key]
+    return f"{flag} {name}"
+
+
+def market_label(market: str) -> str:
+    if market == "double_chance":
+        return "Doble oportunidad (1X/2)"
+    if market == "winner":
+        return "Ganador"
+    line = market.rsplit("over_", 1)[-1].replace("_", ".")
+    if market.startswith("corners_"):
+        return f"Corners {line}"
+    return f"Puntos {line}" if float(line) > 50 else f"Goles {line}"
+
+
+def _pick_labels(kind: str, line) -> tuple[str, str]:
+    """(label if p>=.5, label if p<.5)"""
+    if kind == "result":
+        return "1X (local o empata)", "2 (gana visitante)"
+    if kind == "winner":
+        return "Gana local", "Gana visitante"
+    unit = {"goals": "goles", "corners": "corners", "points": "puntos"}[kind]
+    return f"Más de {line} {unit}", f"Menos de {line} {unit}"
+
+
+def _actual_str(rd: dict, kind: str) -> str:
+    if kind in ("winner", "points"):
+        return f"{rd.get('actual_home_points')}-{rd.get('actual_away_points')}"
+    if kind == "corners":
+        c = rd.get("actual_total_corners")
+        return f"{c} corners" if c is not None else ""
+    return f"{rd.get('actual_home_goals')}-{rd.get('actual_away_goals')}"
+
+
+def _meta(league: str):
+    return load_meta(league, load_config())  # (booster, feats, thr, iso) or None
+
+
+def meta_threshold(league: str) -> float | None:
+    loaded = _meta(league)
+    return loaded[2] if loaded else None
+
+
+def _reliability(conn, league: str) -> dict:
+    spec = SPECS[league]
+    lg_filter = "WHERE league = :lg" if spec.get("league") else ""
+    rows = conn.execute(text(f"""
+        SELECT DISTINCT ON (market) market, reliability
+        FROM {spec['schema']}.calibration_snapshots {lg_filter}
+        ORDER BY market, created_at DESC
+    """), {"lg": spec.get("league")}).fetchall()
+    import json
+    return {m: (r if isinstance(r, list) else json.loads(r)) for m, r in rows}
+
+
+def scored_results(league: str) -> pd.DataFrame:
+    """Every reconciled (game × market) prediction, scored by the meta-model.
+
+    Columns: match_date, home, away, market, pick, conf, correct, meta, holdout.
+    `holdout` marks rows after the meta's chronological 70% training cut — only
+    those are honest for evaluating the meta (it never trained on them).
+    """
+    spec = SPECS[league]
+    extra = f" AND {spec['where']}" if spec.get("where") else ""
+    engine = create_engine(load_config())
+    with engine.begin() as conn:
+        df = pd.read_sql(text(
+            f"SELECT * FROM {spec['table']} WHERE outcome_filled_at_utc IS NOT NULL{extra}"
+        ), conn)
+    out, feat_rows = [], []
+    for _, r in df.iterrows():
+        rd = r.to_dict()
+        for market, (pcol, kind, line) in spec["markets"].items():
+            p = rd.get(pcol)
+            if p is None or pd.isna(p):
+                continue
+            y = _correct(rd, kind, line, float(p))
+            if y is None:
+                continue
+            p = float(p)
+            yes, no = _pick_labels(kind, line)
+            out.append({
+                "match_date": rd["match_date"], "home": rd["home_team"], "away": rd["away_team"],
+                "market": market, "pick": yes if p >= 0.5 else no,
+                "conf": p if p >= 0.5 else 1 - p, "correct": bool(y),
+                "resultado": _actual_str(rd, kind),
+            })
+            feat_rows.append(_row_features(rd, spec, market, p))
+    res = pd.DataFrame(out)
+    if res.empty:
+        return res
+    loaded = _meta(league)
+    if loaded:
+        booster, feats, _thr, iso = loaded
+        X = pd.DataFrame(feat_rows).reindex(columns=feats)
+        raw = booster.predict(X.to_numpy())
+        res["meta"] = iso.predict(raw) if iso is not None else raw
+    else:
+        res["meta"] = None
+    res = res.sort_values("match_date").reset_index(drop=True)
+    cut = res["match_date"].quantile(0.7)  # same rule as train_meta's split
+    res["holdout"] = res["match_date"] > cut
+    return res
+
+
+def today_board(league: str, day: date) -> pd.DataFrame:
+    """Every (game × market) candidate for one day, with hist + meta + gate flag.
+
+    Uses live pending predictions when they exist for that day; otherwise falls
+    back to walk-forward backtest rows (historical replay, leakage-free).
+    """
+    spec = SPECS[league]
+    extra = f" AND {spec['where']}" if spec.get("where") else ""
+    engine = create_engine(load_config())
+    rec_thr = meta_threshold(league)
+    from sandy.betmeta import score_candidate
+    cfg = load_config()
+    with engine.begin() as conn:
+        params = {"a": day, "b": day + timedelta(days=1)}
+        rows = conn.execute(text(f"""
+            SELECT * FROM {spec['table']}
+            WHERE match_date BETWEEN :a AND :b{extra}
+              AND outcome_filled_at_utc IS NULL AND NOT is_backtest
+            ORDER BY match_date, id
+        """), params).fetchall()
+        sim = not rows
+        if sim:
+            rows = conn.execute(text(f"""
+                SELECT * FROM {spec['table']}
+                WHERE match_date BETWEEN :a AND :b{extra} AND is_backtest
+                ORDER BY match_date, id
+            """), params).fetchall()
+        reliability = _reliability(conn, league)
+    out = []
+    for r in rows:
+        rd = dict(r._mapping)
+        for market, (pcol, kind, line) in spec["markets"].items():
+            p = rd.get(pcol)
+            if p is None:
+                continue
+            p = float(p)
+            yes, no = _pick_labels(kind, line)
+            conf = p if p >= 0.5 else 1 - p
+            acc, n = bucket_acc(reliability.get(market), conf)
+            meta_p = score_candidate(league, cfg, rd, market, p)
+            hist_ok = acc is not None and n >= RECOMMEND_MIN_N and acc >= RECOMMEND_MIN_ACC
+            meta_ok = meta_p is not None and rec_thr is not None and meta_p >= rec_thr
+            out.append({
+                "liga": league_title(league), "partido": f"{rd['home_team']} vs {rd['away_team']}",
+                "fecha": rd["match_date"], "mercado": market_label(market), "pick": yes if p >= 0.5 else no,
+                "prob": conf, "hist": acc, "hist_n": n, "meta": meta_p,
+                "umbral": rec_thr, "recomendada": bool(hist_ok and meta_ok), "replay": sim,
+            })
+    df = pd.DataFrame(out)
+    if not df.empty:
+        for c in ("prob", "hist", "meta", "umbral"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+def calibration_latest(league: str) -> pd.DataFrame:
+    """Latest calibration snapshot per market (accuracy, n, recommended threshold)."""
+    spec = SPECS[league]
+    lg_filter = "WHERE league = :lg" if spec.get("league") else ""
+    engine = create_engine(load_config())
+    with engine.begin() as conn:
+        df = pd.read_sql(text(f"""
+            SELECT DISTINCT ON (market) market, snapshot_date, sample_size, accuracy,
+                   recommended_threshold, reliability
+            FROM {spec['schema']}.calibration_snapshots {lg_filter}
+            ORDER BY market, created_at DESC
+        """), conn, params={"lg": spec.get("league")})
+    return df
+
+
+COVARIATE_LABELS = {
+    "goals_for_5": "Goles a favor (últ. 5)", "goals_against_5": "Goles en contra (últ. 5)",
+    "corners_for_5": "Corners a favor (últ. 5)", "corners_against_5": "Corners en contra (últ. 5)",
+    "form_points_5": "Puntos de forma (últ. 5)", "rest_days": "Días de descanso",
+    "played_10": "Partidos jugados (vent. 10)", "gf_5": "Goles a favor (últ. 5)",
+    "ga_5": "Goles en contra (últ. 5)", "gf_10": "Goles a favor (últ. 10)",
+    "ga_10": "Goles en contra (últ. 10)", "points_10": "Puntos (últ. 10)",
+    "back_to_back": "Back-to-back", "pf_5": "Puntos anotados (últ. 5)",
+    "pa_5": "Puntos recibidos (últ. 5)", "pf_10": "Puntos anotados (últ. 10)",
+    "pa_10": "Puntos recibidos (últ. 10)", "wins_10": "Victorias (últ. 10)",
+    "lambda_home": "λ goles local", "lambda_away": "λ goles visitante",
+    "corner_lambda_home": "λ corners local", "corner_lambda_away": "λ corners visitante",
+    "exp_home_points": "Puntos esperados local", "exp_away_points": "Puntos esperados visitante",
+    "exp_total": "Total esperado", "sigma_total": "σ total", "p_home_win": "P(gana local)",
+    "p": "Prob. del modelo", "conf": "Confianza",
+}
+
+
+def covariate_label(key: str) -> str:
+    base = COVARIATE_LABELS.get(key)
+    if base:
+        return base
+    if key.startswith("h_"):
+        return f"Local · {COVARIATE_LABELS.get(key[2:], key[2:])}"
+    if key.startswith("a_"):
+        return f"Visitante · {COVARIATE_LABELS.get(key[2:], key[2:])}"
+    if key.startswith("mkt_"):
+        return f"Mercado: {market_label(key[4:])}"
+    return key
+
+
+def game_covariates(league: str, day: date) -> pd.DataFrame:
+    """One row per game with every covariate the models see (form, rest, lambdas).
+    Live rows when the day has pending predictions; backtest rows otherwise."""
+    import json as _json
+    spec = SPECS[league]
+    extra = f" AND {spec['where']}" if spec.get("where") else ""
+    engine = create_engine(load_config())
+    with engine.begin() as conn:
+        params = {"a": day, "b": day + timedelta(days=1)}
+        rows = conn.execute(text(f"""
+            SELECT * FROM {spec['table']}
+            WHERE match_date BETWEEN :a AND :b{extra}
+              AND outcome_filled_at_utc IS NULL AND NOT is_backtest
+            ORDER BY match_date, id"""), params).fetchall()
+        if not rows:
+            rows = conn.execute(text(f"""
+                SELECT * FROM {spec['table']}
+                WHERE match_date BETWEEN :a AND :b{extra} AND is_backtest
+                ORDER BY match_date, id"""), params).fetchall()
+    out = []
+    for r in rows:
+        rd = dict(r._mapping)
+        feats = rd.get("features")
+        if isinstance(feats, str):
+            try:
+                feats = _json.loads(feats)
+            except (TypeError, ValueError):
+                feats = None
+        feats = feats or {}
+        home, away = feats.get("home") or {}, feats.get("away") or {}
+        row_out = {"partido": f"{rd['home_team']} vs {rd['away_team']}", "fecha": rd["match_date"]}
+        for c in spec["num_cols"]:
+            row_out[covariate_label(c)] = rd.get(c)
+        for k in spec["form_keys"]:
+            row_out[covariate_label(f"h_{k}")] = home.get(k)
+            row_out[covariate_label(f"a_{k}")] = away.get(k)
+        out.append(row_out)
+    return pd.DataFrame(out)
+
+
+def meta_importances(league: str) -> pd.DataFrame:
+    """Which covariates the meta-model leans on (LightGBM gain, normalized)."""
+    import pickle
+    path = load_config().model.model_dir / f"{league}_meta.pkl"
+    if not path.exists():
+        return pd.DataFrame()
+    with open(path, "rb") as f:
+        art = pickle.load(f)
+    imp = art.get("importances") or []
+    total = sum(g for _f, g in imp) or 1.0
+    return pd.DataFrame([{"covariable": covariate_label(f), "importancia %": round(100 * g / total, 1)}
+                         for f, g in imp])
+
+
+def meta_summary(league: str) -> dict:
+    """Headline artifact facts: threshold, AUC, holdout size, trained_at."""
+    import pickle
+    path = load_config().model.model_dir / f"{league}_meta.pkl"
+    if not path.exists():
+        return {}
+    with open(path, "rb") as f:
+        art = pickle.load(f)
+    return {"threshold": art.get("threshold"), "auc": art.get("auc"),
+            "holdout_rows": art.get("holdout_rows"), "trained_rows": art.get("trained_rows"),
+            "trained_at": art.get("trained_at")}
+
+
+def spec_markets(league: str) -> dict[str, str]:
+    return {m: market_label(m) for m in SPECS[league]["markets"]}
+
+
+def ladder(df: pd.DataFrame, thresholds: list[float]) -> pd.DataFrame:
+    """Accuracy ladder over meta thresholds for an already-filtered scored frame."""
+    rows = []
+    for thr in thresholds:
+        m = df[df["meta"] >= thr]
+        rows.append({"umbral 🤖": f"≥{thr:.0%}", "picks": len(m),
+                     "aciertos": int(m["correct"].sum()),
+                     "acierto %": round(100 * m["correct"].mean(), 1) if len(m) else None})
+    return pd.DataFrame(rows)
