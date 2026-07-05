@@ -90,3 +90,7 @@ CREATE TABLE IF NOT EXISTS nhl.calibration_snapshots (
 -- Full MLB-parity totals ladder (added 2026-07-04).
 ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS p_over_4_5 REAL;
 ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS p_over_7_5 REAL;
+
+-- Broader totals ladder (added 2026-07-05).
+ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS p_over_3_5 REAL;
+ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS p_over_8_5 REAL;

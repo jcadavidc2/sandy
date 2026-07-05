@@ -17,9 +17,10 @@ from .recommend import evaluate, load_reliability
 
 logger = logging.getLogger(__name__)
 
-GOAL_LINES = [(f"over_{str(t).replace('.', '_')}", f"p_over_{str(t).replace('.', '_')}", t) for t in (1.5, 2.5, 3.5, 4.5)]
+GOAL_LINES = [(f"over_{str(t).replace('.', '_')}", f"p_over_{str(t).replace('.', '_')}", t)
+              for t in (0.5, 1.5, 2.5, 3.5, 4.5, 5.5)]
 CORNER_LINES = [(f"corners_over_{str(t).replace('.', '_')}", f"p_corners_over_{str(t).replace('.', '_')}", t)
-                for t in (8.5, 9.5, 10.5, 11.5)]
+                for t in (7.5, 8.5, 9.5, 10.5, 11.5, 12.5)]
 
 
 def _candidates(reliability: dict, r) -> list[dict]:

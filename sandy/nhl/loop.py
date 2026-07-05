@@ -30,10 +30,12 @@ def _mk_line(pcol: str, thr: float):
 
 MARKETS = {
     "double_chance": ("p_home_or_tie", lambda r: (r["p_home_or_tie"] >= 0.5) == (r["actual_reg_result"] != "A")),
+    "over_3_5": _mk_line("p_over_3_5", 3.5),
     "over_4_5": _mk_line("p_over_4_5", 4.5),
     "over_5_5": _mk_line("p_over_5_5", 5.5),
     "over_6_5": _mk_line("p_over_6_5", 6.5),
     "over_7_5": _mk_line("p_over_7_5", 7.5),
+    "over_8_5": _mk_line("p_over_8_5", 8.5),
 }
 MEDALS = ["🥇", "🥈", "🥉"]
 
@@ -161,8 +163,9 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14,
 
 
 # ------------------------------- digest ------------------------------------
-NHL_GOAL_LINES = [("over_4_5", "p_over_4_5", 4.5), ("over_5_5", "p_over_5_5", 5.5),
-                  ("over_6_5", "p_over_6_5", 6.5), ("over_7_5", "p_over_7_5", 7.5)]
+NHL_GOAL_LINES = [("over_3_5", "p_over_3_5", 3.5), ("over_4_5", "p_over_4_5", 4.5),
+                  ("over_5_5", "p_over_5_5", 5.5), ("over_6_5", "p_over_6_5", 6.5),
+                  ("over_7_5", "p_over_7_5", 7.5), ("over_8_5", "p_over_8_5", 8.5)]
 
 
 def _candidates(reliability: dict, r) -> list[dict]:

@@ -60,8 +60,12 @@ def compute_scoreline_matrix(
     return m / total if total > 0 else m
 
 
-def markets_from_matrix(m: np.ndarray) -> dict:
-    """Derive W/D/L, over/under, BTTS, most-likely score from a scoreline matrix."""
+def markets_from_matrix(m: np.ndarray, thresholds: list[float] | None = None) -> dict:
+    """Derive W/D/L, over/under, BTTS, most-likely score from a scoreline matrix.
+
+    `thresholds` lets callers (MLS, multi-league soccer) request a wider goals
+    ladder without changing this module's default (used by the World Cup vertical).
+    """
     n = m.shape[0]
     idx = np.arange(n)
     home_i, away_j = np.meshgrid(idx, idx, indexing="ij")
@@ -71,7 +75,7 @@ def markets_from_matrix(m: np.ndarray) -> dict:
     p_draw = float(np.trace(m))
     p_away = float(np.triu(m, 1).sum())    # away_goals > home_goals
 
-    p_over = {t: float(m[totals > t].sum()) for t in GOAL_THRESHOLDS}
+    p_over = {t: float(m[totals > t].sum()) for t in (thresholds or GOAL_THRESHOLDS)}
     p_btts = float(m[(home_i >= 1) & (away_j >= 1)].sum())
 
     mli, mlj = np.unravel_index(int(np.argmax(m)), m.shape)

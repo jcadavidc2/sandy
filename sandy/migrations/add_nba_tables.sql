@@ -69,3 +69,8 @@ CREATE TABLE IF NOT EXISTS nba.calibration_snapshots (
     recommended_threshold REAL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Broader totals ladder (added 2026-07-05).
+ALTER TABLE nba.game_predictions ADD COLUMN IF NOT EXISTS p_over_210_5 REAL;
+ALTER TABLE nba.game_predictions ADD COLUMN IF NOT EXISTS p_over_240_5 REAL;
+ALTER TABLE nba.game_predictions ADD COLUMN IF NOT EXISTS p_over_245_5 REAL;

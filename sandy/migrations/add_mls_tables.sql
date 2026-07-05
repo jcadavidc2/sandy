@@ -118,3 +118,9 @@ CREATE TABLE IF NOT EXISTS mls.calibration_snapshots (
     recommended_threshold REAL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Broader goals + corners ladders (added 2026-07-05).
+ALTER TABLE mls.match_predictions ADD COLUMN IF NOT EXISTS p_over_0_5          REAL;
+ALTER TABLE mls.match_predictions ADD COLUMN IF NOT EXISTS p_over_5_5          REAL;
+ALTER TABLE mls.match_predictions ADD COLUMN IF NOT EXISTS p_corners_over_7_5  REAL;
+ALTER TABLE mls.match_predictions ADD COLUMN IF NOT EXISTS p_corners_over_12_5 REAL;

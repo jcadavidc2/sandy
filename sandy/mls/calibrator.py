@@ -34,14 +34,18 @@ def _corner_line(pcol: str, thr: float):
 MARKETS = {
     "double_chance": ("p_home_or_draw", "actual_result",
                       lambda r: (r["p_home_or_draw"] >= 0.5) == (r["actual_result"] != "A")),
+    "over_0_5": _goal_line("p_over_0_5", 0.5),
     "over_1_5": _goal_line("p_over_1_5", 1.5),
     "over_2_5": _goal_line("p_over_2_5", 2.5),
     "over_3_5": _goal_line("p_over_3_5", 3.5),
     "over_4_5": _goal_line("p_over_4_5", 4.5),
+    "over_5_5": _goal_line("p_over_5_5", 5.5),
+    "corners_over_7_5": _corner_line("p_corners_over_7_5", 7.5),
     "corners_over_8_5": _corner_line("p_corners_over_8_5", 8.5),
     "corners_over_9_5": _corner_line("p_corners_over_9_5", 9.5),
     "corners_over_10_5": _corner_line("p_corners_over_10_5", 10.5),
     "corners_over_11_5": _corner_line("p_corners_over_11_5", 11.5),
+    "corners_over_12_5": _corner_line("p_corners_over_12_5", 12.5),
 }
 
 

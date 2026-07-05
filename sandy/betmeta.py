@@ -36,14 +36,18 @@ SPECS = {
         "schema": "mls", "table": "mls.match_predictions",
         "markets": {
             "double_chance": ("p_home_or_draw", "result", None),
+            "over_0_5": ("p_over_0_5", "goals", 0.5),
             "over_1_5": ("p_over_1_5", "goals", 1.5),
             "over_2_5": ("p_over_2_5", "goals", 2.5),
             "over_3_5": ("p_over_3_5", "goals", 3.5),
             "over_4_5": ("p_over_4_5", "goals", 4.5),
+            "over_5_5": ("p_over_5_5", "goals", 5.5),
+            "corners_over_7_5": ("p_corners_over_7_5", "corners", 7.5),
             "corners_over_8_5": ("p_corners_over_8_5", "corners", 8.5),
             "corners_over_9_5": ("p_corners_over_9_5", "corners", 9.5),
             "corners_over_10_5": ("p_corners_over_10_5", "corners", 10.5),
             "corners_over_11_5": ("p_corners_over_11_5", "corners", 11.5),
+            "corners_over_12_5": ("p_corners_over_12_5", "corners", 12.5),
         },
         "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"],
         "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
@@ -56,14 +60,18 @@ SPECS = {
             "where": f"league = '{lg}'", "league": lg,
             "markets": {
                 "double_chance": ("p_home_or_draw", "result", None),
+                "over_0_5": ("p_over_0_5", "goals", 0.5),
                 "over_1_5": ("p_over_1_5", "goals", 1.5),
                 "over_2_5": ("p_over_2_5", "goals", 2.5),
                 "over_3_5": ("p_over_3_5", "goals", 3.5),
                 "over_4_5": ("p_over_4_5", "goals", 4.5),
+                "over_5_5": ("p_over_5_5", "goals", 5.5),
+                "corners_over_7_5": ("p_corners_over_7_5", "corners", 7.5),
                 "corners_over_8_5": ("p_corners_over_8_5", "corners", 8.5),
                 "corners_over_9_5": ("p_corners_over_9_5", "corners", 9.5),
                 "corners_over_10_5": ("p_corners_over_10_5", "corners", 10.5),
                 "corners_over_11_5": ("p_corners_over_11_5", "corners", 11.5),
+                "corners_over_12_5": ("p_corners_over_12_5", "corners", 12.5),
             },
             "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"],
             "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
@@ -75,11 +83,14 @@ SPECS = {
         "schema": "nba", "table": "nba.game_predictions",
         "markets": {
             "winner": ("p_home_win", "winner", None),
+            "over_210_5": ("p_over_210_5", "points", 210.5),
             "over_215_5": ("p_over_215_5", "points", 215.5),
             "over_220_5": ("p_over_220_5", "points", 220.5),
             "over_225_5": ("p_over_225_5", "points", 225.5),
             "over_230_5": ("p_over_230_5", "points", 230.5),
             "over_235_5": ("p_over_235_5", "points", 235.5),
+            "over_240_5": ("p_over_240_5", "points", 240.5),
+            "over_245_5": ("p_over_245_5", "points", 245.5),
         },
         "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win"],
         "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
@@ -88,10 +99,12 @@ SPECS = {
         "schema": "nhl", "table": "nhl.game_predictions",
         "markets": {
             "double_chance": ("p_home_or_tie", "result", None),
+            "over_3_5": ("p_over_3_5", "goals", 3.5),
             "over_4_5": ("p_over_4_5", "goals", 4.5),
             "over_5_5": ("p_over_5_5", "goals", 5.5),
             "over_6_5": ("p_over_6_5", "goals", 6.5),
             "over_7_5": ("p_over_7_5", "goals", 7.5),
+            "over_8_5": ("p_over_8_5", "goals", 8.5),
         },
         "num_cols": ["lambda_home", "lambda_away"],
         "form_keys": ["gf_5", "ga_5", "gf_10", "ga_10", "points_10", "rest_days", "played_10"],
@@ -115,6 +128,27 @@ SPECS = {
         "form_keys": [],
         "no_snapshot": True, "no_backtest_col": True, "no_hist_gate": True,
     },
+    # MLB totals (the original over/under vertical): per-line meta over the
+    # reconciled daily predictions, surfaced by the derived.mlb_predictions_meta
+    # view (aliases game_date/team codes to the shared match_date/home_team shape).
+    # Dashboard-only — the daily MLB digest keeps its own meta_over_5_5 model.
+    "mlb": {
+        "schema": "derived", "table": "derived.mlb_predictions_meta",
+        "markets": {
+            "over_5_5": ("p_over_5_5", "runs", 5.5),
+            "over_6_5": ("p_over_6_5", "runs", 6.5),
+            "over_7_5": ("p_over_7_5", "runs", 7.5),
+            "over_8_5": ("p_over_8_5", "runs", 8.5),
+            "over_9_5": ("p_over_9_5", "runs", 9.5),
+            "over_10_5": ("p_over_10_5", "runs", 10.5),
+            "over_11_5": ("p_over_11_5", "runs", 11.5),
+        },
+        "num_cols": ["home_starter_era", "away_starter_era", "home_trailing15_rpg",
+                     "away_trailing15_rpg", "home_expected_runs", "away_expected_runs",
+                     "sigma_used"],
+        "form_keys": [],
+        "no_snapshot": True, "no_backtest_col": True,
+    },
 }
 
 
@@ -137,6 +171,11 @@ def _correct(row, kind: str, line: float | None, p: float) -> bool | None:
         return pick_yes == bool(b)
     if kind == "points":
         actual = row.get("actual_total")
+        if actual is None or (isinstance(actual, float) and np.isnan(actual)):
+            return None
+        return pick_yes == (actual > line)
+    if kind == "runs":
+        actual = row.get("actual_total_runs")
         if actual is None or (isinstance(actual, float) and np.isnan(actual)):
             return None
         return pick_yes == (actual > line)

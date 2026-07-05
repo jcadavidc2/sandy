@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 DISPLAY_TZ = ZoneInfo("America/Los_Angeles")
 XI = 0.0038                      # ~6-month half-life
-TOTAL_THRESHOLDS = [4.5, 5.5, 6.5, 7.5]
+TOTAL_THRESHOLDS = [3.5, 4.5, 5.5, 6.5, 7.5, 8.5]
 MAX_GOALS = 12
 FORM_BLEND_WEIGHT = 0.2
 
@@ -133,21 +133,23 @@ def persist_prediction(conn, game_id: int, mdate: date, hid: int, aid: int,
         INSERT INTO nhl.game_predictions (
             game_id, match_date, home_team_id, away_team_id, home_team, away_team,
             lambda_home, lambda_away, p_home_win_reg, p_tie_reg, p_away_win_reg,
-            p_home_or_tie, p_over_4_5, p_over_5_5, p_over_6_5, p_over_7_5,
+            p_home_or_tie, p_over_3_5, p_over_4_5, p_over_5_5, p_over_6_5, p_over_7_5, p_over_8_5,
             most_likely_home, most_likely_away,
             features, is_backtest, predicted_at_utc)
         VALUES (:gid, :d, :hid, :aid, :hn, :an, :lh, :la, :ph, :pt, :pa, :pht,
-                :o45, :o55, :o65, :o75, :mlh, :mla, :feats, :bt, :now)
+                :o35, :o45, :o55, :o65, :o75, :o85, :mlh, :mla, :feats, :bt, :now)
         ON CONFLICT (game_id) DO UPDATE SET
             lambda_home=:lh, lambda_away=:la, p_home_win_reg=:ph, p_tie_reg=:pt,
             p_away_win_reg=:pa, p_home_or_tie=:pht,
-            p_over_4_5=:o45, p_over_5_5=:o55, p_over_6_5=:o65, p_over_7_5=:o75,
+            p_over_3_5=:o35, p_over_4_5=:o45, p_over_5_5=:o55, p_over_6_5=:o65,
+            p_over_7_5=:o75, p_over_8_5=:o85,
             most_likely_home=:mlh, most_likely_away=:mla, features=:feats,
             is_backtest=:bt, predicted_at_utc=:now
     """), {"gid": game_id, "d": mdate, "hid": hid, "aid": aid, "hn": hname, "an": aname,
            "lh": mk["lambda_home"], "la": mk["lambda_away"], "ph": mk["p_home_win_reg"],
            "pt": mk["p_tie_reg"], "pa": mk["p_away_win_reg"], "pht": mk["p_home_or_tie"],
-           "o45": mk["p_over"][4.5], "o55": mk["p_over"][5.5], "o65": mk["p_over"][6.5], "o75": mk["p_over"][7.5],
+           "o35": mk["p_over"][3.5], "o45": mk["p_over"][4.5], "o55": mk["p_over"][5.5],
+           "o65": mk["p_over"][6.5], "o75": mk["p_over"][7.5], "o85": mk["p_over"][8.5],
            "mlh": mk["most_likely"][0], "mla": mk["most_likely"][1],
            "feats": json.dumps(mk["features"]) if mk.get("features") else None,
            "bt": is_backtest, "now": datetime.now(timezone.utc)})

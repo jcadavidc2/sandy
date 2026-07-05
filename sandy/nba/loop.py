@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 MIGRATION = Path(__file__).resolve().parent.parent / "migrations" / "add_nba_tables.sql"
 SEASON_MONTHS = {1, 2, 3, 4, 5, 6, 10, 11, 12}
-TOTAL_LINES = [215.5, 220.5, 225.5, 230.5, 235.5]
+TOTAL_LINES = [210.5, 215.5, 220.5, 225.5, 230.5, 235.5, 240.5, 245.5]
 HALF_LIFE_DAYS = 120.0
 MIN_TRAIN = 400
 MIN_SAMPLES = 30
@@ -246,14 +246,16 @@ _UPSERT = text("""
     INSERT INTO nba.game_predictions (
         event_id, match_date, home_team_id, away_team_id, home_team, away_team,
         exp_home_points, exp_away_points, exp_total, sigma_total, p_home_win,
-        p_over_215_5, p_over_220_5, p_over_225_5, p_over_230_5, p_over_235_5,
+        p_over_210_5, p_over_215_5, p_over_220_5, p_over_225_5, p_over_230_5,
+        p_over_235_5, p_over_240_5, p_over_245_5,
         features, is_backtest, predicted_at_utc)
     VALUES (:eid, :d, :hid, :aid, :hn, :an, :eh, :ea, :tot, :sig, :phw,
-            :o215, :o220, :o225, :o230, :o235, :feats, :bt, :now)
+            :o210, :o215, :o220, :o225, :o230, :o235, :o240, :o245, :feats, :bt, :now)
     ON CONFLICT (event_id) DO UPDATE SET
         exp_home_points=:eh, exp_away_points=:ea, exp_total=:tot, sigma_total=:sig,
-        p_home_win=:phw, p_over_215_5=:o215, p_over_220_5=:o220, p_over_225_5=:o225,
-        p_over_230_5=:o230, p_over_235_5=:o235, features=:feats, is_backtest=:bt,
+        p_home_win=:phw, p_over_210_5=:o210, p_over_215_5=:o215, p_over_220_5=:o220,
+        p_over_225_5=:o225, p_over_230_5=:o230, p_over_235_5=:o235, p_over_240_5=:o240,
+        p_over_245_5=:o245, features=:feats, is_backtest=:bt,
         predicted_at_utc=:now
 """)
 
@@ -262,9 +264,10 @@ def _persist(conn, eid, mdate, hid, aid, hn, an, mk, is_backtest=False):
     conn.execute(_UPSERT, {"eid": eid, "d": mdate, "hid": hid, "aid": aid, "hn": hn, "an": an,
                            "eh": mk["eh"], "ea": mk["ea"], "tot": mk["total"], "sig": mk["sigma"],
                            "phw": mk["p_home_win"],
-                           "o215": mk["p_over"][215.5], "o220": mk["p_over"][220.5],
-                           "o225": mk["p_over"][225.5], "o230": mk["p_over"][230.5],
-                           "o235": mk["p_over"][235.5],
+                           "o210": mk["p_over"][210.5], "o215": mk["p_over"][215.5],
+                           "o220": mk["p_over"][220.5], "o225": mk["p_over"][225.5],
+                           "o230": mk["p_over"][230.5], "o235": mk["p_over"][235.5],
+                           "o240": mk["p_over"][240.5], "o245": mk["p_over"][245.5],
                            "feats": json.dumps(mk["features"]) if mk.get("features") else None,
                            "bt": is_backtest, "now": datetime.now(timezone.utc)})
 
@@ -332,11 +335,14 @@ def _line_market(pcol, thr):
 MARKETS = {
     "winner": ("p_home_win", "actual_winner",
                lambda r: (r["p_home_win"] >= 0.5) == (r["actual_winner"] == "H")),
+    "over_210_5": _line_market("p_over_210_5", 210.5),
     "over_215_5": _line_market("p_over_215_5", 215.5),
     "over_220_5": _line_market("p_over_220_5", 220.5),
     "over_225_5": _line_market("p_over_225_5", 225.5),
     "over_230_5": _line_market("p_over_230_5", 230.5),
     "over_235_5": _line_market("p_over_235_5", 235.5),
+    "over_240_5": _line_market("p_over_240_5", 240.5),
+    "over_245_5": _line_market("p_over_245_5", 245.5),
 }
 
 
@@ -451,11 +457,14 @@ def format_daily_digest(config: Config | None = None, *, for_date: date | None =
                 w = evaluate(reliability, "winner", r.p_home_win, "Gana local", "Gana visitante")
                 if w:
                     cands.append(w)
-                for market, col, thr in (("over_215_5", "p_over_215_5", 215.5),
+                for market, col, thr in (("over_210_5", "p_over_210_5", 210.5),
+                                         ("over_215_5", "p_over_215_5", 215.5),
                                          ("over_220_5", "p_over_220_5", 220.5),
                                          ("over_225_5", "p_over_225_5", 225.5),
                                          ("over_230_5", "p_over_230_5", 230.5),
-                                         ("over_235_5", "p_over_235_5", 235.5)):
+                                         ("over_235_5", "p_over_235_5", 235.5),
+                                         ("over_240_5", "p_over_240_5", 240.5),
+                                         ("over_245_5", "p_over_245_5", 245.5)):
                     c = evaluate(reliability, market, getattr(r, col),
                                  f"Más de {thr} puntos", f"Menos de {thr} puntos")
                     if c:

@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-GOAL_THRESHOLDS: list[float] = [1.5, 2.5, 3.5, 4.5]
-CORNER_THRESHOLDS: list[float] = [8.5, 9.5, 10.5, 11.5]
+GOAL_THRESHOLDS: list[float] = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]
+CORNER_THRESHOLDS: list[float] = [7.5, 8.5, 9.5, 10.5, 11.5, 12.5]
 
 # ESPN status.type.name → our normalized status.
 _STATUS_MAP = {

@@ -17,6 +17,7 @@ from sandy.football.predictor import compute_scoreline_matrix, markets_from_matr
 from sandy.football.ratings import DixonColesModel, fit_dixon_coles, load_model, save_model
 from sandy.mls.parsers import DISPLAY_TZ
 from sandy.mls.predictor import CORNER_MAX, corner_overs
+from sandy.mls.schemas import GOAL_THRESHOLDS
 from sandy.over_under.notifier import send_telegram
 
 from . import LEAGUES
@@ -135,16 +136,19 @@ def _predict_row(engine, goals: DixonColesModel, corners: DixonColesModel, leagu
     hf, af = feats.get("home") or {}, feats.get("away") or {}
     lam = _blend(lam, hf.get("goals_for_5"), af.get("goals_against_5"))
     mu = _blend(mu, af.get("goals_for_5"), hf.get("goals_against_5"))
-    mk = markets_from_matrix(compute_scoreline_matrix(lam, mu, goals.rho))
+    mk = markets_from_matrix(compute_scoreline_matrix(lam, mu, goals.rho),
+                             thresholds=GOAL_THRESHOLDS)
     clam, cmu = corners.expected_goals(hid, aid)
     c_over = corner_overs(compute_scoreline_matrix(clam, cmu, 0.0, max_goals=CORNER_MAX))
     return {"eid": eid, "lg": league, "d": mdate, "hid": hid, "aid": aid, "hn": hname, "an": aname,
             "lh": round(lam, 3), "la": round(mu, 3),
             "phw": mk["p_home_win"], "pd": mk["p_draw"], "paw": mk["p_away_win"],
             "phd": mk["p_home_win"] + mk["p_draw"],
-            "o15": mk["p_over"][1.5], "o25": mk["p_over"][2.5], "o35": mk["p_over"][3.5],
-            "o45": mk["p_over"][4.5], "clh": round(clam, 2), "cla": round(cmu, 2),
-            "c85": c_over[8.5], "c95": c_over[9.5], "c105": c_over[10.5], "c115": c_over[11.5],
+            "o05": mk["p_over"][0.5], "o15": mk["p_over"][1.5], "o25": mk["p_over"][2.5],
+            "o35": mk["p_over"][3.5], "o45": mk["p_over"][4.5], "o55": mk["p_over"][5.5],
+            "clh": round(clam, 2), "cla": round(cmu, 2),
+            "c75": c_over[7.5], "c85": c_over[8.5], "c95": c_over[9.5], "c105": c_over[10.5],
+            "c115": c_over[11.5], "c125": c_over[12.5],
             "mlh": mk["most_likely"][0], "mla": mk["most_likely"][1],
             "feats": json.dumps(feats) if feats else None, "bt": is_backtest,
             "now": datetime.now(timezone.utc)}
@@ -154,19 +158,23 @@ _UPSERT = text("""
     INSERT INTO soccer.match_predictions (
         event_id, league, match_date, home_team_id, away_team_id, home_team, away_team,
         lambda_home, lambda_away, p_home_win, p_draw, p_away_win, p_home_or_draw,
-        p_over_1_5, p_over_2_5, p_over_3_5, p_over_4_5,
+        p_over_0_5, p_over_1_5, p_over_2_5, p_over_3_5, p_over_4_5, p_over_5_5,
         corner_lambda_home, corner_lambda_away,
-        p_corners_over_8_5, p_corners_over_9_5, p_corners_over_10_5, p_corners_over_11_5,
+        p_corners_over_7_5, p_corners_over_8_5, p_corners_over_9_5, p_corners_over_10_5,
+        p_corners_over_11_5, p_corners_over_12_5,
         most_likely_home, most_likely_away, features, is_backtest, predicted_at_utc)
     VALUES (:eid, :lg, :d, :hid, :aid, :hn, :an, :lh, :la, :phw, :pd, :paw, :phd,
-            :o15, :o25, :o35, :o45, :clh, :cla, :c85, :c95, :c105, :c115,
+            :o05, :o15, :o25, :o35, :o45, :o55, :clh, :cla,
+            :c75, :c85, :c95, :c105, :c115, :c125,
             :mlh, :mla, :feats, :bt, :now)
     ON CONFLICT (event_id) DO UPDATE SET
         lambda_home=:lh, lambda_away=:la, p_home_win=:phw, p_draw=:pd, p_away_win=:paw,
-        p_home_or_draw=:phd, p_over_1_5=:o15, p_over_2_5=:o25, p_over_3_5=:o35, p_over_4_5=:o45,
+        p_home_or_draw=:phd, p_over_0_5=:o05, p_over_1_5=:o15, p_over_2_5=:o25,
+        p_over_3_5=:o35, p_over_4_5=:o45, p_over_5_5=:o55,
         corner_lambda_home=:clh, corner_lambda_away=:cla,
-        p_corners_over_8_5=:c85, p_corners_over_9_5=:c95, p_corners_over_10_5=:c105,
-        p_corners_over_11_5=:c115, most_likely_home=:mlh, most_likely_away=:mla,
+        p_corners_over_7_5=:c75, p_corners_over_8_5=:c85, p_corners_over_9_5=:c95,
+        p_corners_over_10_5=:c105, p_corners_over_11_5=:c115, p_corners_over_12_5=:c125,
+        most_likely_home=:mlh, most_likely_away=:mla,
         features=:feats, is_backtest=:bt, predicted_at_utc=:now
 """)
 
@@ -249,12 +257,15 @@ def _corner_line(pcol, thr):
 MARKETS = {
     "double_chance": ("p_home_or_draw", "actual_result",
                       lambda r: (r["p_home_or_draw"] >= 0.5) == (r["actual_result"] != "A")),
-    "over_1_5": _goal_line("p_over_1_5", 1.5), "over_2_5": _goal_line("p_over_2_5", 2.5),
-    "over_3_5": _goal_line("p_over_3_5", 3.5), "over_4_5": _goal_line("p_over_4_5", 4.5),
+    "over_0_5": _goal_line("p_over_0_5", 0.5), "over_1_5": _goal_line("p_over_1_5", 1.5),
+    "over_2_5": _goal_line("p_over_2_5", 2.5), "over_3_5": _goal_line("p_over_3_5", 3.5),
+    "over_4_5": _goal_line("p_over_4_5", 4.5), "over_5_5": _goal_line("p_over_5_5", 5.5),
+    "corners_over_7_5": _corner_line("p_corners_over_7_5", 7.5),
     "corners_over_8_5": _corner_line("p_corners_over_8_5", 8.5),
     "corners_over_9_5": _corner_line("p_corners_over_9_5", 9.5),
     "corners_over_10_5": _corner_line("p_corners_over_10_5", 10.5),
     "corners_over_11_5": _corner_line("p_corners_over_11_5", 11.5),
+    "corners_over_12_5": _corner_line("p_corners_over_12_5", 12.5),
 }
 
 
@@ -382,10 +393,13 @@ def format_daily_digest(config: Config | None = None, *, for_date: date | None =
                               "Local o empata (1X)", "Gana visitante (2)")
                 if dc:
                     cands.append(dc)
-                for market, col, thr in (("over_1_5", "p_over_1_5", 1.5), ("over_2_5", "p_over_2_5", 2.5),
-                                         ("over_3_5", "p_over_3_5", 3.5), ("over_4_5", "p_over_4_5", 4.5),
+                for market, col, thr in (("over_0_5", "p_over_0_5", 0.5), ("over_1_5", "p_over_1_5", 1.5),
+                                         ("over_2_5", "p_over_2_5", 2.5), ("over_3_5", "p_over_3_5", 3.5),
+                                         ("over_4_5", "p_over_4_5", 4.5), ("over_5_5", "p_over_5_5", 5.5),
+                                         ("corners_over_7_5", "p_corners_over_7_5", 7.5),
                                          ("corners_over_9_5", "p_corners_over_9_5", 9.5),
-                                         ("corners_over_11_5", "p_corners_over_11_5", 11.5)):
+                                         ("corners_over_11_5", "p_corners_over_11_5", 11.5),
+                                         ("corners_over_12_5", "p_corners_over_12_5", 12.5)):
                     c = evaluate(reliability, market, getattr(r, col),
                                  f"Más de {thr} {'corners' if 'corners' in market else 'goles'}",
                                  f"Menos de {thr} {'corners' if 'corners' in market else 'goles'}")
