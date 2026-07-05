@@ -56,7 +56,9 @@ elif nivel_sel.startswith("💎"):
     df = df[df["nivel"] == "💎"]
 
 from sandy.dashboard.filters import filter_ui
-df = filter_ui(df, "picks", skip=("umbral",))
+# odds columns are mostly-NaN (solo hay cuota si la línea existe en el mercado):
+# a range slider on them would silently drop every pick sin cuota — skip them
+df = filter_ui(df, "picks", skip=("umbral", "cuota", "mercado %", "edge", "EV"))
 
 pend = df[df["acertó"] == "—"]
 played = df[df["acertó"] != "—"]
@@ -68,15 +70,21 @@ if len(played):
     k4.metric("Acierto (jugados)",
               f"{(played['acertó'] == '✓').mean():.0%} ({(played['acertó'] == '✓').sum()}/{len(played)})")
 
+# cuota/edge/EV (💰 capa de valor) — solo cuando el feed de cuotas trae algo
+extra_cols = [c for c in ("cuota", "edge", "EV")
+              if c in df.columns and df[c].notna().any()]
 st.dataframe(
     df[["nivel", "liga", "fecha", "partido", "mercado", "pick", "prob", "🤖", "umbral",
-        "acierto_hist", "resultado", "acertó"]],
+        "acierto_hist", *extra_cols, "resultado", "acertó"]],
     use_container_width=True, hide_index=True, height=520,
     column_config={
         "prob": st.column_config.ProgressColumn("prob", format="percent", min_value=0, max_value=1),
         "🤖": st.column_config.ProgressColumn("🤖 P(acierto)", format="percent", min_value=0, max_value=1),
         "umbral": st.column_config.NumberColumn("umbral línea", format="percent"),
         "acierto_hist": st.column_config.NumberColumn("acierto @Th", format="percent"),
+        "cuota": st.column_config.NumberColumn("cuota", format="%.2f"),
+        "edge": st.column_config.NumberColumn("edge", format="percent"),
+        "EV": st.column_config.NumberColumn("EV", format="%.2f"),
     },
 )
 st.download_button("⬇️ Descargar picks (CSV)", df.to_csv(index=False).encode(),

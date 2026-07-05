@@ -235,7 +235,12 @@ def date_bounds(league: str):
 def board_range(league: str, start: date, end: date) -> pd.DataFrame:
     """The sketch's Games table: one row per game in [start, end]; per market a
     composite cell `prob (🤖meta / Th→Acu) ✅` — with the real result and per-pick
-    ✓/✗ for finished games (future games have no result yet)."""
+    ✓/✗ for finished games (future games have no result yet).
+
+    Pick rows also carry cuota / mercado % / edge / EV when TheOddsAPI stored
+    matched odds for that game+line (see sandy/odds.py). edge/EV use the pick's
+    OWN `prob` (base-model calibrated side probability) — NOT 🤖, which is
+    P(pick correct), a different quantity."""
     spec = SPECS[league]
     extra = f" AND {spec['where']}" if spec.get("where") else ""
     live_cond = ("TRUE" if spec.get("no_backtest_col")
@@ -252,6 +257,13 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
             SELECT * FROM {spec['table']}
             WHERE match_date BETWEEN :a AND :b{extra} AND {live_cond}
             ORDER BY match_date, id"""), {"a": start, "b": end}).fetchall()
+    try:  # odds are decoration: any failure leaves the board intact
+        from sandy import odds as _odds
+        oidx = _odds.odds_index(league, start, end, engine)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("odds_index failed — board served without cuotas")
+        oidx = {}
     out, picks, all_ok = [], [], []
     for r in rows:
         rd = dict(r._mapping)
@@ -293,6 +305,19 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
                             "prob": conf, "🤖": mp, "umbral": thr, "acierto_hist": acc_thr,
                             "resultado": res_str or "(pendiente)",
                             "acertó": ("✓" if correct else "✗") if correct is not None else "—"}
+                # cuota/mercado %/edge/EV from matched TheOddsAPI odds (may be
+                # empty). edge uses `conf` = the pick's own side prob, NOT 🤖.
+                vstats = {"cuota": None, "mercado %": None, "edge": None, "EV": None}
+                if oidx:
+                    from sandy import odds as _odds
+                    mapping = _odds.market_to_api(league, market)
+                    if mapping:
+                        api_m, pt = mapping
+                        hit = oidx.get((rd["match_date"], (base["local"] or "").strip(),
+                                        (base["visitante"] or "").strip(), api_m, pt,
+                                        _odds.pick_side(kind, p)))
+                        vstats = _odds.value_stats(conf, hit)
+                pick_row.update(vstats)
                 all_ok.append(pick_row)
                 if best is None or (mp or 0) > best["🤖"]:
                     best = pick_row

@@ -43,6 +43,17 @@ then
     tg "⚠️ Refinador meta² falló hoy — los niveles ⭐/💎 siguen con umbrales del meta (fallback automático)"
 fi
 
+# Odds/value layer (TheOddsAPI): frugal fetch (only sports with pending
+# predictions today, once per sport per day), match to our games, value log +
+# reconcile. NON-FATAL like the refiner block: picks simply render without
+# cuota/edge when this fails. MLB usually isn't covered here (its morning
+# predictions land 14:00 UTC) — the 14:15 UTC odds_daily.sh cron picks it up.
+echo "[$(date -Iseconds)] odds/value layer (fetch frugal + match + value log)..."
+if ! nice -n 10 .venv/bin/python -m sandy.odds daily >> logs/odds.log 2>&1; then
+    echo "[$(date -Iseconds)] odds daily FAILED (non-fatal)" | tee -a logs/odds.log
+    tg "⚠️ Capa de cuotas/valor falló en el run de las 13:30 — reintenta sola a las 14:15 UTC"
+fi
+
 echo "[$(date -Iseconds)] restarting dashboard (fresh artifacts for the webpage)..."
 PID=$(ss -tlnp 2>/dev/null | grep 8502 | grep -oP 'pid=\K[0-9]+' | head -1 || true)
 [ -n "${PID}" ] && kill "$PID" && sleep 3

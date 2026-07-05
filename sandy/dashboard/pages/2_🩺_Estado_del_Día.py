@@ -32,6 +32,7 @@ JOBS = [
     ("🏆 Mundial nightly", "football.log", (13, 0)),
     ("🤖 Metas extra + refinador + refresh web", "metas_extra.log", (13, 30)),
     ("⚾ MLB predicciones del día", "over_under.log", (14, 0)),
+    ("💰 Cuotas + valor (TheOddsAPI)", "odds.log", (14, 15)),
 ]
 OK_PAT = re.compile(r"COMPLETE|complete|Done\b")
 BAD_PAT = re.compile(r"FAILED|falló|Traceback|ERROR")
