@@ -14,7 +14,7 @@ st.title("🏁 Picks finales — todas las ligas")
 st.caption("Máx. 1 pick por juego (el mejor 🤖 entre los ✅ de ese juego), consolidado "
            "entre todas las ligas y ordenado por 🤖. El mismo filtro del Tablero y de Telegram.")
 
-c1, c2, c3 = st.columns([1.4, 2.2, 1])
+c1, c2, c3, c4 = st.columns([1.4, 2, 1, 1])
 rng = c1.date_input("Fecha / rango", (date.today(), date.today() + timedelta(days=1)),
                     help="Hoy por defecto (incluye mañana para juegos de madrugada). "
                          "Elige fechas pasadas para ver cómo salieron los picks.")
@@ -22,19 +22,22 @@ leagues = c2.multiselect("Ligas", list(D.LEAGUES), default=list(D.LEAGUES),
                          format_func=D.league_title)
 min_meta = c3.slider("🤖 mínimo", 0.5, 0.99, 0.5, 0.01,
                      help="Sube esto para quedarte solo con la crema del día.")
+solo_mejor = c4.toggle("Solo el mejor por juego", value=True,
+                       help="Apagado = TODOS los picks ✅ (un juego puede tener varios).")
 if len(rng) != 2:
     st.stop()
 
 
 @st.cache_data(ttl=300)
-def _finals(lg: str, a: date, b: date) -> pd.DataFrame:
-    _games, finals = D.board_range(lg, a, b)
-    if not finals.empty:
-        finals.insert(0, "liga", D.league_title(lg))
-    return finals
+def _finals(lg: str, a: date, b: date, best_only: bool) -> pd.DataFrame:
+    _games, finals, todos = D.board_range(lg, a, b)
+    sel = finals if best_only else todos
+    if not sel.empty:
+        sel.insert(0, "liga", D.league_title(lg))
+    return sel
 
 
-frames = [f for f in (_finals(lg, rng[0], rng[1]) for lg in leagues) if not f.empty]
+frames = [f for f in (_finals(lg, rng[0], rng[1], solo_mejor) for lg in leagues) if not f.empty]
 if not frames:
     st.info("Ningún pick ✅ en ese rango — o no hay juegos, o el meta-modelo no ve valor "
             "(mejor no apostar). Prueba ampliar el rango o revisa una fecha con temporada activa.")

@@ -69,7 +69,7 @@ def _range(lg, a, b):
     return D.board_range(lg, a, b)
 
 
-games, finals = _range(league, rng[0], rng[1])
+games, finals, _todos = _range(league, rng[0], rng[1])
 if games.empty:
     st.info("Sin juegos en el rango.")
     st.stop()

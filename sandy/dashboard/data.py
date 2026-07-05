@@ -247,7 +247,7 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
             SELECT * FROM {spec['table']}
             WHERE match_date BETWEEN :a AND :b{extra} AND {live_cond}
             ORDER BY match_date, id"""), {"a": start, "b": end}).fetchall()
-    out, picks = [], []
+    out, picks, all_ok = [], [], []
     for r in rows:
         rd = dict(r._mapping)
         base = {"fecha": rd["match_date"], "local": rd["home_team"] if "home_team" in rd else rd.get("home"),
@@ -277,20 +277,24 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
             base[market_label(market, kind)] = cell
             if finished and not res_str:
                 res_str = _actual_str(rd, kind)
-            if ok and (best is None or (mp or 0) > best["🤖"]):
+            if ok:
                 yes, no = _pick_labels(kind, line)
-                best = {"fecha": rd["match_date"], "partido": f"{base['local']} vs {base['visitante']}",
-                        "mercado": market_label(market, kind), "pick": yes if p >= 0.5 else no,
-                        "prob": conf, "🤖": mp, "umbral": thr, "acierto_hist": acc_thr,
-                        "resultado": res_str or "(pendiente)",
-                        "acertó": ("✓" if correct else "✗") if correct is not None else "—"}
+                pick_row = {"fecha": rd["match_date"], "partido": f"{base['local']} vs {base['visitante']}",
+                            "mercado": market_label(market, kind), "pick": yes if p >= 0.5 else no,
+                            "prob": conf, "🤖": mp, "umbral": thr, "acierto_hist": acc_thr,
+                            "resultado": res_str or "(pendiente)",
+                            "acertó": ("✓" if correct else "✗") if correct is not None else "—"}
+                all_ok.append(pick_row)
+                if best is None or (mp or 0) > best["🤖"]:
+                    best = pick_row
         base["resultado"] = res_str or "(por jugar)"
         out.append(base)
         if best:
             picks.append(best)
     games = pd.DataFrame(out)
     finals = pd.DataFrame(picks).sort_values("🤖", ascending=False) if picks else pd.DataFrame()
-    return games, finals
+    todos = pd.DataFrame(all_ok).sort_values("🤖", ascending=False) if all_ok else pd.DataFrame()
+    return games, finals, todos
 
 
 def calibration_latest(league: str) -> pd.DataFrame:
