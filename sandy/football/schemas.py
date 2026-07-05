@@ -67,7 +67,10 @@ class MatchStatRow:
 # ---------------------------------------------------------------------------
 
 # Goal-total thresholds we score, analogous to baseball's STANDARD_THRESHOLDS.
-GOAL_THRESHOLDS: list[float] = [1.5, 2.5, 3.5, 4.5]
+# Widened to 0.5/5.5 on 2026-07-05 (same ladder MLS/soccer got in 30eafa8);
+# history refilled via the walk-forward backtest, so the new columns are as
+# leakage-free as the original ones.
+GOAL_THRESHOLDS: list[float] = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]
 
 
 @dataclass(frozen=True)
@@ -85,7 +88,7 @@ class FootballPrediction:
     p_home_win: float
     p_draw: float
     p_away_win: float
-    p_over: dict[float, float]          # {1.5: .., 2.5: .., 3.5: .., 4.5: ..}
+    p_over: dict[float, float]          # {0.5: .., 1.5: .., ..., 5.5: ..}
     p_btts: float
     most_likely_home: int
     most_likely_away: int

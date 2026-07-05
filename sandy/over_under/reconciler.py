@@ -21,7 +21,7 @@ def _threshold_col(t: float) -> str:
     return str(t).replace(".", "_")
 
 
-def reconcile_over_under(engine: Engine) -> int:
+def reconcile_over_under(engine: Engine, *, backtest_only: bool = False) -> int:
     """Fill actual outcomes for all Final games with NULL actual_total_runs.
 
     Computes:
@@ -30,13 +30,18 @@ def reconcile_over_under(engine: Engine) -> int:
     - was_correct_T = (p_over_T >= 0.5) == actual_over_T
 
     Returns number of rows updated. Idempotent — skips already-filled rows.
+
+    With *backtest_only* (used by the walk-forward backtest) only rows with
+    is_backtest = TRUE are touched, so the nightly live reconcile still finds
+    (and reports on) today's freshly finished games itself.
     """
     total_updated = 0
+    backtest_filter = "AND o.is_backtest" if backtest_only else ""
 
     with engine.begin() as conn:
         # Get unreconciled predictions for Final games
         rows = conn.execute(
-            text("""
+            text(f"""
                 SELECT
                     o.id, o.game_pk, o.game_date,
                     o.p_over_5_5, o.p_over_6_5, o.p_over_7_5, o.p_over_8_5,
@@ -48,6 +53,7 @@ def reconcile_over_under(engine: Engine) -> int:
                   AND g.status = 'Final'
                   AND g.home_score IS NOT NULL
                   AND g.away_score IS NOT NULL
+                  {backtest_filter}
             """)
         ).fetchall()
 

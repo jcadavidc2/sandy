@@ -6,7 +6,7 @@ matrix (with the Dixon-Coles low-score correction), and derive every market
 from that one matrix:
 
 - W/D/L  (lower-triangle / diagonal / upper-triangle)
-- P(total > 1.5/2.5/3.5/4.5)
+- P(total > 0.5/1.5/2.5/3.5/4.5/5.5)
 - BTTS   (both teams score)
 - most-likely exact scoreline (argmax cell)
 
@@ -63,8 +63,9 @@ def compute_scoreline_matrix(
 def markets_from_matrix(m: np.ndarray, thresholds: list[float] | None = None) -> dict:
     """Derive W/D/L, over/under, BTTS, most-likely score from a scoreline matrix.
 
-    `thresholds` lets callers (MLS, multi-league soccer) request a wider goals
-    ladder without changing this module's default (used by the World Cup vertical).
+    `thresholds` lets callers (MLS, multi-league soccer) request their own goals
+    ladder without changing this module's default (used by the World Cup
+    vertical, which since 2026-07-05 also spans 0.5-5.5).
     """
     n = m.shape[0]
     idx = np.arange(n)
@@ -207,19 +208,20 @@ _PRED_UPSERT = text("""
     INSERT INTO football.match_predictions
         (fixture_id, match_date, home_team_id, away_team_id, predicted_at_utc,
          lambda_home, lambda_away, p_home_win, p_draw, p_away_win,
-         p_over_1_5, p_over_2_5, p_over_3_5, p_over_4_5, p_btts,
+         p_over_0_5, p_over_1_5, p_over_2_5, p_over_3_5, p_over_4_5, p_over_5_5, p_btts,
          most_likely_home, most_likely_away, scoreline, feature_vector)
     VALUES
         (:fixture_id, :match_date, :home_team_id, :away_team_id, :predicted_at_utc,
          :lambda_home, :lambda_away, :p_home_win, :p_draw, :p_away_win,
-         :p_over_1_5, :p_over_2_5, :p_over_3_5, :p_over_4_5, :p_btts,
+         :p_over_0_5, :p_over_1_5, :p_over_2_5, :p_over_3_5, :p_over_4_5, :p_over_5_5, :p_btts,
          :most_likely_home, :most_likely_away, CAST(:scoreline AS JSONB), CAST(:feature_vector AS JSONB))
     ON CONFLICT (fixture_id) DO UPDATE SET
         match_date = EXCLUDED.match_date, predicted_at_utc = EXCLUDED.predicted_at_utc,
         lambda_home = EXCLUDED.lambda_home, lambda_away = EXCLUDED.lambda_away,
         p_home_win = EXCLUDED.p_home_win, p_draw = EXCLUDED.p_draw, p_away_win = EXCLUDED.p_away_win,
-        p_over_1_5 = EXCLUDED.p_over_1_5, p_over_2_5 = EXCLUDED.p_over_2_5,
-        p_over_3_5 = EXCLUDED.p_over_3_5, p_over_4_5 = EXCLUDED.p_over_4_5, p_btts = EXCLUDED.p_btts,
+        p_over_0_5 = EXCLUDED.p_over_0_5, p_over_1_5 = EXCLUDED.p_over_1_5, p_over_2_5 = EXCLUDED.p_over_2_5,
+        p_over_3_5 = EXCLUDED.p_over_3_5, p_over_4_5 = EXCLUDED.p_over_4_5,
+        p_over_5_5 = EXCLUDED.p_over_5_5, p_btts = EXCLUDED.p_btts,
         most_likely_home = EXCLUDED.most_likely_home, most_likely_away = EXCLUDED.most_likely_away,
         scoreline = EXCLUDED.scoreline, feature_vector = EXCLUDED.feature_vector
 """)
@@ -236,8 +238,9 @@ def persist_predictions(engine: Engine, predictions: list[FootballPrediction]) -
                 "predicted_at_utc": p.predicted_at_utc,
                 "lambda_home": p.lambda_home, "lambda_away": p.lambda_away,
                 "p_home_win": p.p_home_win, "p_draw": p.p_draw, "p_away_win": p.p_away_win,
-                "p_over_1_5": p.p_over[1.5], "p_over_2_5": p.p_over[2.5],
-                "p_over_3_5": p.p_over[3.5], "p_over_4_5": p.p_over[4.5], "p_btts": p.p_btts,
+                "p_over_0_5": p.p_over[0.5], "p_over_1_5": p.p_over[1.5],
+                "p_over_2_5": p.p_over[2.5], "p_over_3_5": p.p_over[3.5],
+                "p_over_4_5": p.p_over[4.5], "p_over_5_5": p.p_over[5.5], "p_btts": p.p_btts,
                 "most_likely_home": p.most_likely_home, "most_likely_away": p.most_likely_away,
                 "scoreline": json.dumps(p.scoreline),
                 "feature_vector": json.dumps(p.feature_vector),

@@ -311,6 +311,7 @@ CREATE TABLE IF NOT EXISTS derived.over_under_outcomes (
     was_correct_10_5 BOOLEAN,
     was_correct_11_5 BOOLEAN,
     outcome_filled_at_utc TIMESTAMPTZ,
+    is_backtest BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE (game_pk, game_date)
 );
 

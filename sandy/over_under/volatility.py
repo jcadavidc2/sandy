@@ -55,6 +55,7 @@ def train_volatility_model(
     *,
     seed: int = 42,
     training_window: tuple[date, date] | None = None,
+    runs_artifact: ModelArtifact | None = None,
 ) -> ModelArtifact:
     """Train a model that predicts |actual_total - predicted_total| per game.
 
@@ -70,7 +71,7 @@ def train_volatility_model(
     engine = create_engine(config)
 
     with get_connection(engine) as conn:
-        df = _load_volatility_frame(conn, config, training_window)
+        df = _load_volatility_frame(conn, config, training_window, runs_artifact=runs_artifact)
 
     if len(df) < 100:
         raise ValueError(
@@ -191,6 +192,7 @@ def _load_volatility_frame(
     conn: Connection,
     config: Config,
     training_window: tuple[date, date] | None,
+    runs_artifact: ModelArtifact | None = None,
 ) -> pd.DataFrame:
     """Load game features + actual totals, compute predicted totals via runs model.
 
@@ -199,16 +201,21 @@ def _load_volatility_frame(
     - Get actual_total = home_score + away_score
     - Predict home_runs + away_runs using the runs model
     - residual = abs(actual_total - predicted_total)
+
+    If *runs_artifact* is provided it is used directly (e.g. a walk-forward
+    backtest's in-memory as-of model); otherwise the production runs artifact
+    is loaded from disk (unchanged default behavior).
     """
-    # First, load the runs model for predictions
-    runs_artifact_path = config.model.artifact_path("runs")
-    try:
-        runs_artifact = load_artifact(runs_artifact_path, expected_target="runs")
-    except FileNotFoundError:
-        raise ValueError(
-            "Runs model not found. Train the runs model first with "
-            "'sandy train --target runs' before training volatility."
-        )
+    if runs_artifact is None:
+        # Load the production runs model for predictions
+        runs_artifact_path = config.model.artifact_path("runs")
+        try:
+            runs_artifact = load_artifact(runs_artifact_path, expected_target="runs")
+        except FileNotFoundError:
+            raise ValueError(
+                "Runs model not found. Train the runs model first with "
+                "'sandy train --target runs' before training volatility."
+            )
 
     where_clause = ""
     params: dict = {}

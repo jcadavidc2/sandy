@@ -167,6 +167,44 @@ def reconcile_cmd(ctx: click.Context, date_str: str | None, notify: bool) -> Non
         click.echo("Telegram notification sent.")
 
 
+@over_under.command("backtest")
+@click.option("--start", "start_str", type=str, default=None,
+              help="First game date to replay (YYYY-MM-DD). Default 2023-04-01.")
+@click.option("--end", "end_str", type=str, default=None,
+              help="Last game date to replay (YYYY-MM-DD). Default 2026-05-05 "
+                   "(the day before live daily predictions begin).")
+@click.pass_context
+def backtest_cmd(ctx: click.Context, start_str: str | None, end_str: str | None) -> None:
+    """Walk-forward historical backtest (refit every 14 days, leakage-free).
+
+    Seeds derived.over_under_outcomes with is_backtest=TRUE scored predictions
+    for ~3 seasons so the meta-models train on years instead of weeks.
+    Long-running (hours). Production model artifacts are never modified.
+    """
+    from sandy.cli.main import _require_config
+    from sandy.db import create_engine
+    from sandy.over_under.backtest import (
+        run_backtest,
+        sanity_check,
+        verify_no_leakage,
+    )
+
+    config = _require_config(ctx)
+    start = _parse_date(start_str) if start_str else None
+    end = _parse_date(end_str) if end_str else None
+
+    click.echo("Running MLB over/under walk-forward backtest (this takes hours)...")
+    result = run_backtest(config, start=start, end=end)
+    click.echo(f"Backtest: {result}")
+
+    engine = create_engine(config)
+    audit = verify_no_leakage(engine)
+    click.echo(f"Leakage audit: {audit}")
+    acc = sanity_check(engine)
+    for line, stats in acc["backtest"].items():
+        click.echo(f"  O{line}: {stats['accuracy']} ({stats['n']} games)")
+
+
 @over_under.command("calibrate")
 @click.option("--notify", is_flag=True, help="Send Telegram notification with results.")
 @click.option("--weekly", is_flag=True, help="Run deeper weekly analysis with 4-week trends.")
