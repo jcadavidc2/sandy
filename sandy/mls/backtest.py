@@ -13,7 +13,7 @@ from sandy.db import create_engine
 from sandy.football.ratings import fit_dixon_coles
 
 from .predictor import build_prediction, persist_predictions
-from .ratings import CORNERS_XI, GOALS_XI, load_corner_matches, load_goal_matches
+from .ratings import hyper, load_corner_matches, load_goal_matches
 from .reconciler import reconcile
 
 logger = logging.getLogger(__name__)
@@ -42,9 +42,10 @@ def run_backtest(config: Config | None = None, *, start: date | None = None,
         if len(gdf) < MIN_TRAIN_MATCHES:
             block_start = block_end + timedelta(days=1)
             continue
-        goals = fit_dixon_coles(gdf, as_of_date=block_start, xi=GOALS_XI)
+        hp = hyper()
+        goals = fit_dixon_coles(gdf, as_of_date=block_start, xi=hp["xi_goals"])
         cdf = load_corner_matches(engine, as_of=block_start)
-        corners = fit_dixon_coles(cdf, as_of_date=block_start, xi=CORNERS_XI) if len(cdf) >= MIN_TRAIN_MATCHES else goals
+        corners = fit_dixon_coles(cdf, as_of_date=block_start, xi=hp["xi_corners"]) if len(cdf) >= MIN_TRAIN_MATCHES else goals
         with engine.begin() as conn:
             rows = conn.execute(text("""
                 SELECT m.event_id, m.match_date, m.home_team_id, m.away_team_id, t1.name, t2.name

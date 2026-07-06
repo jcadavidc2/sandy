@@ -15,6 +15,7 @@ from sandy.config import Config, load_config
 from sandy.db import create_engine
 from sandy.football.predictor import compute_scoreline_matrix, markets_from_matrix
 from sandy.football.ratings import DixonColesModel, fit_dixon_coles, load_model, save_model
+from sandy.hyper import load_hyper
 from sandy.mls.parsers import DISPLAY_TZ
 from sandy.mls.predictor import CORNER_MAX, corner_overs
 from sandy.mls.schemas import GOAL_THRESHOLDS
@@ -29,6 +30,12 @@ FORM_BLEND_WEIGHT = 0.2
 MIN_TRAIN = 250
 MIN_SAMPLES = 30
 BUCKETS = [0.0, 0.4, 0.5, 0.6, 0.7, 0.8, 1.01]
+# Defaults above; models/hyper_soccer_{lg}.json overrides (walk-forward tuned).
+HYPER_DEFAULTS = {"xi_goals": XI, "xi_corners": XI, "blend_goals": FORM_BLEND_WEIGHT}
+
+
+def hyper(league: str) -> dict:
+    return load_hyper(f"soccer_{league}", HYPER_DEFAULTS)
 
 
 # ------------------------------ data + form --------------------------------
@@ -84,10 +91,10 @@ def team_form(engine: Engine, team_id: int, as_of: date) -> dict:
             "played_10": len(rows)}
 
 
-def _blend(lam, form_gf, opp_ga):
-    if form_gf is None or opp_ga is None:
+def _blend(lam, form_gf, opp_ga, weight=FORM_BLEND_WEIGHT):
+    if form_gf is None or opp_ga is None or weight <= 0:
         return lam
-    return (1 - FORM_BLEND_WEIGHT) * lam + FORM_BLEND_WEIGHT * (form_gf + opp_ga) / 2.0
+    return (1 - weight) * lam + weight * (form_gf + opp_ga) / 2.0
 
 
 # ------------------------------ ratings ------------------------------------
@@ -97,10 +104,11 @@ def _paths(cfg: Config, league: str):
 
 
 def fit_league(engine: Engine, cfg: Config, league: str) -> dict:
+    hp = hyper(league)
     gdf = load_goals(engine, league)
-    goals = fit_dixon_coles(gdf, as_of_date=date.today(), xi=XI)
+    goals = fit_dixon_coles(gdf, as_of_date=date.today(), xi=hp["xi_goals"])
     cdf = load_corners(engine, league)
-    corners = fit_dixon_coles(cdf, as_of_date=date.today(), xi=XI) if len(cdf) >= MIN_TRAIN else goals
+    corners = fit_dixon_coles(cdf, as_of_date=date.today(), xi=hp["xi_corners"]) if len(cdf) >= MIN_TRAIN else goals
     gp, cp = _paths(cfg, league)
     save_model(goals, gp)
     save_model(corners, cp)
@@ -134,8 +142,9 @@ def _predict_row(engine, goals: DixonColesModel, corners: DixonColesModel, leagu
              if with_features else {})
     lam, mu = goals.expected_goals(hid, aid)
     hf, af = feats.get("home") or {}, feats.get("away") or {}
-    lam = _blend(lam, hf.get("goals_for_5"), af.get("goals_against_5"))
-    mu = _blend(mu, af.get("goals_for_5"), hf.get("goals_against_5"))
+    blend_w = hyper(league)["blend_goals"]
+    lam = _blend(lam, hf.get("goals_for_5"), af.get("goals_against_5"), blend_w)
+    mu = _blend(mu, af.get("goals_for_5"), hf.get("goals_against_5"), blend_w)
     mk = markets_from_matrix(compute_scoreline_matrix(lam, mu, goals.rho),
                              thresholds=GOAL_THRESHOLDS)
     clam, cmu = corners.expected_goals(hid, aid)
@@ -315,11 +324,14 @@ def calibrate(config: Config | None = None, *, lookback_days: int | None = None)
 
 
 # ------------------------------ backtest -----------------------------------
-def run_backtest(config: Config | None = None, *, refit_days: int = 14) -> dict:
+def run_backtest(config: Config | None = None, *, refit_days: int = 14,
+                 leagues: tuple[str, ...] | None = None) -> dict:
+    """Walk-forward backtest. ``leagues`` restricts to a subset (default: all) —
+    used when only some leagues' base-model hypers changed."""
     cfg = config or load_config()
     engine = create_engine(cfg)
     predicted = 0
-    for lg in LEAGUES:
+    for lg in (leagues or LEAGUES):
         with engine.begin() as conn:
             lo, hi = conn.execute(text(
                 "SELECT MIN(match_date), MAX(match_date) FROM soccer.matches WHERE league=:lg AND status='FT'"
@@ -331,9 +343,10 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14) -> dict:
             block_end = min(block_start + timedelta(days=refit_days - 1), hi)
             gdf = load_goals(engine, lg, as_of=block_start)
             if len(gdf) >= MIN_TRAIN:
-                goals = fit_dixon_coles(gdf, as_of_date=block_start, xi=XI)
+                hp = hyper(lg)
+                goals = fit_dixon_coles(gdf, as_of_date=block_start, xi=hp["xi_goals"])
                 cdf = load_corners(engine, lg, as_of=block_start)
-                corners = fit_dixon_coles(cdf, as_of_date=block_start, xi=XI) if len(cdf) >= MIN_TRAIN else goals
+                corners = fit_dixon_coles(cdf, as_of_date=block_start, xi=hp["xi_corners"]) if len(cdf) >= MIN_TRAIN else goals
                 with engine.begin() as conn:
                     rows = conn.execute(text(_SCHED_SQL.format(status="'FT'")),
                                         {"lg": lg, "a": block_start, "b": block_end}).fetchall()

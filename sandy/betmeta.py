@@ -38,6 +38,19 @@ THRESHOLDS = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]
 ERR_WINDOW = 8
 MODEL_ERR_FEATURES = ("h_model_err", "h_model_abs_err", "a_model_err", "a_model_abs_err")
 
+# "Team base-model reliability" covariates: per team, the rolling mean (and
+# count) of the base model's per-game correct-pick FRACTION (share of that
+# game's graded markets where pick p>=0.5 matched the outcome) over the team's
+# last REL_WINDOW reconciled games STRICTLY BEFORE the row's match_date.
+# Same bulk (_attach_team_rel) / live (_team_recent_rel) equality contract as
+# MODEL_ERR_FEATURES. NaN mean + 0 count with no history.
+REL_WINDOW = 12
+TEAM_REL_FEATURES = ("h_base_rel", "h_base_rel_n", "a_base_rel", "a_base_rel_n")
+
+# Bump when the _frame/_row_features feature schema changes — downstream caches
+# (betrefine's OOF store) key on this so a feature upgrade invalidates them.
+FRAME_VERSION = 2
+
 # league → (schema, predictions table, markets: name → (prob col, kind, line))
 SPECS = {
     "mls": {
@@ -271,7 +284,74 @@ def _attach_model_err(df: pd.DataFrame, spec: dict) -> pd.DataFrame:
     return df
 
 
+def _game_base_frac(rd: dict, spec: dict) -> float:
+    """Share of this game's graded markets where the base pick was correct.
+    Pure function of the row dict — bulk and live use this same code."""
+    ok = tot = 0
+    for _market, (pcol, kind, line) in spec["markets"].items():
+        p = rd.get(pcol)
+        if p is None or (isinstance(p, float) and np.isnan(p)):
+            continue
+        y = _correct(rd, kind, line, float(p))
+        if y is None:
+            continue
+        tot += 1
+        ok += 1 if y else 0
+    return ok / tot if tot else float("nan")
+
+
+def _attach_team_rel(df: pd.DataFrame, spec: dict) -> pd.DataFrame:
+    """Bulk path for TEAM_REL_FEATURES over a reconciled frame.
+
+    Mirrors _attach_model_err: per-team history of per-game base-correct
+    fractions ordered by (match_date, id) ascending; each row gets the mean and
+    count of the HOME/AWAY team's trailing REL_WINDOW fractions strictly before
+    its match_date (same-date games excluded). Value-identical with
+    _team_recent_rel by construction (same ordering, same window, same frac)."""
+    df = df.copy()
+    if df.empty:
+        for c in TEAM_REL_FEATURES:
+            df[c] = np.nan
+        return df
+    fracs = [_game_base_frac(r, spec) for r in df.to_dict("records")]
+    hist_src = pd.DataFrame({"date": df["match_date"], "id": df["id"],
+                             "home": df["home_team"], "away": df["away_team"],
+                             "frac": fracs})
+    hist_src = hist_src[hist_src["frac"].notna()].sort_values(["date", "id"], kind="mergesort")
+    hist: dict[str, tuple[list, list]] = {}
+    for d, h, a, f in zip(hist_src["date"], hist_src["home"], hist_src["away"], hist_src["frac"]):
+        for team in (h, a):
+            dates, vals = hist.setdefault(team, ([], []))
+            dates.append(d)
+            vals.append(float(f))
+    from bisect import bisect_left
+
+    def _pair(team, d):
+        dv = hist.get(team)
+        if not dv:
+            return np.nan, 0.0
+        dates, vals = dv
+        i = bisect_left(dates, d)
+        w = vals[max(0, i - REL_WINDOW):i]
+        if not w:
+            return np.nan, 0.0
+        return float(np.asarray(w).mean()), float(len(w))
+
+    cols = {c: [] for c in TEAM_REL_FEATURES}
+    for d, h, a in zip(df["match_date"], df["home_team"], df["away_team"]):
+        hr, hn = _pair(h, d)
+        ar, an = _pair(a, d)
+        cols["h_base_rel"].append(hr)
+        cols["h_base_rel_n"].append(hn)
+        cols["a_base_rel"].append(ar)
+        cols["a_base_rel_n"].append(an)
+    for c, v in cols.items():
+        df[c] = v
+    return df
+
+
 _err_cache: dict = {}
+_rel_cache: dict = {}
 _err_engine = None
 
 
@@ -321,6 +401,55 @@ def _team_recent_err(league: str, cfg: Config, team, match_date) -> tuple[float,
     return out
 
 
+def _team_recent_rel(league: str, cfg: Config, team, match_date) -> tuple[float, float]:
+    """Single-row (live) path for TEAM_REL_FEATURES: (mean base-correct
+    fraction, count) over *team*'s last REL_WINDOW reconciled games strictly
+    before *match_date*. Fetches a 3x window and keeps the trailing REL_WINDOW
+    games with a computable fraction — the exact set _attach_team_rel selects.
+    Cached per (league, team, date). Must stay value-identical with the bulk
+    path (audited like the model-err covariates)."""
+    global _err_engine
+    key = (league, str(team), str(match_date))
+    if key in _rel_cache:
+        return _rel_cache[key]
+    spec = SPECS[league]
+    extra = f" AND {spec['where']}" if spec.get("where") else ""
+    if _err_engine is None:
+        _err_engine = create_engine(cfg)
+    with _err_engine.begin() as conn:
+        rows = conn.execute(text(f"""
+            SELECT * FROM {spec['table']}
+            WHERE outcome_filled_at_utc IS NOT NULL
+              AND (home_team = :t OR away_team = :t)
+              AND match_date < :d{extra}
+            ORDER BY match_date DESC, id DESC
+            LIMIT :n
+        """), {"t": team, "d": match_date, "n": REL_WINDOW * 3}).mappings().fetchall()
+    fracs = []
+    for r in rows:  # newest → oldest; stop at REL_WINDOW computable games
+        f = _game_base_frac(dict(r), spec)
+        if not np.isnan(f):
+            fracs.append(f)
+        if len(fracs) >= REL_WINDOW:
+            break
+    if fracs:
+        out = (float(np.asarray(fracs).mean()), float(len(fracs)))
+    else:
+        out = (float("nan"), 0.0)
+    _rel_cache[key] = out
+    return out
+
+
+def _num(v) -> float:
+    """NaN-safe float of a row value."""
+    if v is None:
+        return float("nan")
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def _row_features(row, spec, market, p, league: str | None = None,
                   cfg: Config | None = None) -> dict:
     feats = row.get("features")
@@ -338,6 +467,41 @@ def _row_features(row, spec, market, p, league: str | None = None,
         hv, av = home.get(k), away.get(k)
         out[f"h_{k}"] = float(hv) if isinstance(hv, (int, float)) else np.nan
         out[f"a_{k}"] = float(av) if isinstance(av, (int, float)) else np.nan
+    # ---- pure row+spec features (identical bulk/live by construction) -------
+    # expected_total: the base model's expected total for its primary quantity
+    # (λh+λa, exp_total, expected runs). line_value/margin/z_margin: the
+    # numeric market line, distance of the KIND-matched expected total to it,
+    # and that distance standardized (Poisson sd=sqrt(expected) for goals/
+    # corners/runs; the row's sigma_total for points). NaN-safe throughout.
+    exp_base = 0.0
+    for c in spec["err_expected"]:
+        exp_base += _num(row.get(c))
+    out["expected_total"] = exp_base
+    _pcol, kind, line = spec["markets"][market]
+    out["line_value"] = float(line) if line is not None else np.nan
+    margin = z_margin = float("nan")
+    if line is not None:
+        if kind == "corners":
+            exp_kind = _num(row.get("corner_lambda_home")) + _num(row.get("corner_lambda_away"))
+        else:
+            exp_kind = exp_base
+        margin = exp_kind - float(line)
+        if kind == "points":
+            sd = _num(row.get("sigma_total"))
+        else:  # goals / corners / runs: Poisson-ish
+            sd = np.sqrt(exp_kind) if exp_kind > 0 else float("nan")
+        if sd and not np.isnan(sd) and sd > 0:
+            z_margin = margin / sd
+    out["margin"] = margin
+    out["z_margin"] = z_margin
+    # Season phase as month-of-year one-hots (trivially identical in bulk and
+    # live paths — chosen over days-since-season-start for path equality).
+    try:
+        month = int(pd.Timestamp(row.get("match_date")).month)
+    except (TypeError, ValueError):
+        month = 0
+    for m_i in range(1, 13):
+        out[f"mon_{m_i}"] = 1.0 if m_i == month else 0.0
     # Model's-own-recent-errors covariates: bulk-attached upstream when present
     # (_attach_model_err on training/dashboard frames); live rows straight off
     # the DB lack them → cached single-row lookup, identical by construction.
@@ -353,6 +517,19 @@ def _row_features(row, spec, market, p, league: str | None = None,
     else:
         for k in MODEL_ERR_FEATURES:
             out[k] = np.nan
+    # Team base-model reliability: same bulk-attached/live-lookup contract.
+    if all(k in row for k in TEAM_REL_FEATURES):
+        for k in TEAM_REL_FEATURES:
+            v = row.get(k)
+            out[k] = float(v) if v is not None else np.nan
+    elif league is not None and cfg is not None:
+        hr, hn = _team_recent_rel(league, cfg, row.get("home_team"), row.get("match_date"))
+        ar, an = _team_recent_rel(league, cfg, row.get("away_team"), row.get("match_date"))
+        out["h_base_rel"], out["h_base_rel_n"] = hr, hn
+        out["a_base_rel"], out["a_base_rel_n"] = ar, an
+    else:
+        out["h_base_rel"], out["h_base_rel_n"] = np.nan, np.nan
+        out["a_base_rel"], out["a_base_rel_n"] = np.nan, np.nan
     for m in spec["markets"]:
         out[f"mkt_{m}"] = 1.0 if m == market else 0.0
     return out
@@ -369,6 +546,7 @@ def _frame(engine, league: str, with_ids: bool = False) -> pd.DataFrame:
         df = pd.read_sql(text(
             f"SELECT * FROM {spec['table']} WHERE outcome_filled_at_utc IS NOT NULL{extra}"), conn)
     df = _attach_model_err(df, spec)
+    df = _attach_team_rel(df, spec)
     rows, ys, dates, gids, mkts, homes, aways = [], [], [], [], [], [], []
     for _, r in df.iterrows():
         rd = r.to_dict()
@@ -440,12 +618,12 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     cy = calib["_y"].to_numpy()
     booster, chosen, calib_auc = None, None, -1.0
     for hp in [dict(learning_rate=lr, num_leaves=nl, min_data_in_leaf=mdl)
-               for lr in (0.05, 0.03) for nl in (15, 31) for mdl in (40, 100)]:
+               for lr in (0.05, 0.03, 0.02) for nl in (15, 31) for mdl in (40, 100, 300)]:
         b = lgb.train({**base_params, **hp},
                       lgb.Dataset(train[feat_cols], label=train["_y"]),
-                      num_boost_round=500,
+                      num_boost_round=800,
                       valid_sets=[lgb.Dataset(calib[feat_cols], label=calib["_y"])],
-                      callbacks=[lgb.early_stopping(50, verbose=False)])
+                      callbacks=[lgb.early_stopping(100, verbose=False)])
         cauc = float(roc_auc_score(
             cy, b.predict(calib[feat_cols], num_iteration=b.best_iteration)))
         if cauc > calib_auc:
@@ -554,6 +732,89 @@ def train_meta(league: str, config: Config | None = None) -> dict:
             "calib_auc": round(calib_auc, 4), "params": chosen,
             "threshold_by_market": threshold_by_market,
             "importances": artifact["importances"]}
+
+
+def _acc_at_threshold(artifact: dict) -> float | None:
+    """Holdout accuracy at the artifact's own recommended threshold."""
+    thr = artifact.get("threshold")
+    if thr is None:
+        return None
+    for t in artifact.get("eval_table") or []:
+        if t["thr"] == thr:
+            return t["acc"]
+    return None
+
+
+def retrain_gated(leagues: list[str] | None = None, config: Config | None = None) -> dict:
+    """Retrain every league's meta with a global honesty gate.
+
+    Per league: back up the current artifact to models/backup_aucpass/, record
+    its test AUC + accuracy@recommended-threshold, retrain, record the new
+    numbers. SHIP RULE: keep the new artifacts only if the mean test AUC
+    improves AND the mean acc@threshold does not drop >1pp; additionally any
+    single league regressing >0.02 AUC is individually reverted to its backup.
+    If the global gate fails, ALL leagues are reverted. Returns the full
+    old->new report (also written to models/tuning/meta_retrain_report.json)."""
+    import shutil
+    cfg = config or load_config()
+    mdir = cfg.model.model_dir
+    bdir = mdir / "backup_aucpass"
+    bdir.mkdir(parents=True, exist_ok=True)
+    report: dict[str, dict] = {}
+    for lg in (leagues or list(SPECS)):
+        path = mdir / f"{lg}_meta.pkl"
+        old: dict = {}
+        if path.exists():
+            shutil.copy2(path, bdir / path.name)
+            with open(path, "rb") as f:
+                a = pickle.load(f)
+            old = {"auc": a.get("auc"), "thr": a.get("threshold"),
+                   "acc_at_thr": _acc_at_threshold(a), "rows": a.get("holdout_rows")}
+        try:
+            res = train_meta(lg, cfg)
+            with open(path, "rb") as f:
+                a = pickle.load(f)
+            new = {"auc": a.get("auc"), "thr": a.get("threshold"),
+                   "acc_at_thr": _acc_at_threshold(a), "rows": a.get("holdout_rows"),
+                   "params": res.get("params")}
+        except Exception as e:  # noqa: BLE001 -- a failed league keeps its backup
+            new = {"error": str(e)}
+            if (bdir / path.name).exists():
+                shutil.copy2(bdir / path.name, path)
+        report[lg] = {"old": old, "new": new}
+        logger.info("retrain_gated %s: old=%s new=%s", lg, old, new)
+    scored = {lg: r for lg, r in report.items()
+              if r["old"].get("auc") is not None and r["new"].get("auc") is not None}
+    accs = {lg: r for lg, r in scored.items()
+            if r["old"].get("acc_at_thr") is not None and r["new"].get("acc_at_thr") is not None}
+    summary: dict = {"leagues": report, "reverted": []}
+    if scored:
+        mean_old_auc = sum(r["old"]["auc"] for r in scored.values()) / len(scored)
+        mean_new_auc = sum(r["new"]["auc"] for r in scored.values()) / len(scored)
+        mean_old_acc = (sum(r["old"]["acc_at_thr"] for r in accs.values()) / len(accs)) if accs else None
+        mean_new_acc = (sum(r["new"]["acc_at_thr"] for r in accs.values()) / len(accs)) if accs else None
+        ship = mean_new_auc > mean_old_auc and (
+            mean_old_acc is None or mean_new_acc >= mean_old_acc - 0.01)
+        if ship:
+            for lg, r in scored.items():
+                if r["old"]["auc"] - r["new"]["auc"] > 0.02:
+                    shutil.copy2(bdir / f"{lg}_meta.pkl", mdir / f"{lg}_meta.pkl")
+                    summary["reverted"].append(lg)
+        else:
+            for lg in report:
+                b = bdir / f"{lg}_meta.pkl"
+                if b.exists():
+                    shutil.copy2(b, mdir / f"{lg}_meta.pkl")
+                    summary["reverted"].append(lg)
+        summary.update({"mean_old_auc": round(mean_old_auc, 4),
+                        "mean_new_auc": round(mean_new_auc, 4),
+                        "mean_old_acc": round(mean_old_acc, 4) if mean_old_acc is not None else None,
+                        "mean_new_acc": round(mean_new_acc, 4) if mean_new_acc is not None else None,
+                        "ship_all_new": ship})
+    out = mdir / "tuning" / "meta_retrain_report.json"
+    out.parent.mkdir(exist_ok=True)
+    out.write_text(json.dumps(summary, indent=2, default=str))
+    return summary
 
 
 _loaded: dict = {}

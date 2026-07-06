@@ -23,7 +23,7 @@ from .schemas import CORNER_THRESHOLDS, GOAL_THRESHOLDS, MlsPrediction
 logger = logging.getLogger(__name__)
 
 CORNER_MAX = 16          # per-side truncation for the corners matrix (totals to 32)
-FORM_BLEND_WEIGHT = 0.2  # validated by walk-forward backtest vs weight=0
+FORM_BLEND_WEIGHT = 0.2  # default; models/hyper_mls.json overrides (walk-forward tuned)
 
 
 def corner_overs(m) -> dict[float, float]:
@@ -38,12 +38,14 @@ def corner_overs(m) -> dict[float, float]:
 def build_prediction(engine: Engine, goals: DixonColesModel, corners: DixonColesModel,
                      row, as_of: date, *, is_backtest: bool = False,
                      with_features: bool = True) -> MlsPrediction:
+    from .ratings import hyper
     eid, mdate, hid, aid, hname, aname = row
     feats = match_features(engine, hid, aid, as_of) if with_features else {}
     lam, mu = goals.expected_goals(hid, aid)
     hf, af = feats.get("home") or {}, feats.get("away") or {}
-    lam = blend_lambda(lam, hf.get("goals_for_5"), af.get("goals_against_5"), FORM_BLEND_WEIGHT)
-    mu = blend_lambda(mu, af.get("goals_for_5"), hf.get("goals_against_5"), FORM_BLEND_WEIGHT)
+    blend_w = hyper()["blend_goals"]
+    lam = blend_lambda(lam, hf.get("goals_for_5"), af.get("goals_against_5"), blend_w)
+    mu = blend_lambda(mu, af.get("goals_for_5"), hf.get("goals_against_5"), blend_w)
     gm = compute_scoreline_matrix(lam, mu, goals.rho)
     mk = markets_from_matrix(gm, thresholds=GOAL_THRESHOLDS)
 

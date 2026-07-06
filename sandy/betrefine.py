@@ -115,8 +115,8 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import text
 
-from sandy.betmeta import (MODEL_ERR_FEATURES, SPECS, _frame, _row_features,
-                           _team_recent_err, _wilson_lb)
+from sandy.betmeta import (FRAME_VERSION, MODEL_ERR_FEATURES, SPECS, _frame,
+                           _row_features, _team_recent_err, _wilson_lb)
 from sandy.config import Config, load_config
 from sandy.db import create_engine
 
@@ -355,8 +355,11 @@ def _data_sig(engine, league: str) -> tuple:
         n, mx = conn.execute(text(
             f"SELECT COUNT(*), MAX(match_date) FROM {spec['table']} "
             f"WHERE outcome_filled_at_utc IS NOT NULL{extra}")).fetchone()
-    # block config in the signature → changing the OOF scheme invalidates caches
-    return int(n), str(mx), N_BLOCKS, SEED_BLOCKS
+    # block config + feature-schema version in the signature → changing the OOF
+    # scheme OR betmeta's feature set invalidates caches. NOTE: a backtest
+    # re-run that rewrites the same games does not move (n, max-date) — callers
+    # that regenerate backtests must pass force=True (train_refiner(force_oof=..)).
+    return int(n), str(mx), N_BLOCKS, SEED_BLOCKS, FRAME_VERSION
 
 
 def build_oof(league: str, cfg: Config, engine=None, force: bool = False) -> pd.DataFrame:

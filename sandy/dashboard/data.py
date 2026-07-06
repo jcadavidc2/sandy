@@ -10,7 +10,8 @@ from datetime import date, timedelta
 import pandas as pd
 from sqlalchemy import text
 
-from sandy.betmeta import SPECS, _attach_model_err, _correct, _row_features, load_meta
+from sandy.betmeta import (SPECS, _attach_model_err, _attach_team_rel, _correct,
+                           _row_features, load_meta)
 from sandy.config import load_config
 from sandy.db import create_engine
 from sandy.mls.recommend import RECOMMEND_MIN_ACC, RECOMMEND_MIN_N, bucket_acc
@@ -114,6 +115,7 @@ def scored_results(league: str) -> pd.DataFrame:
     # scores here identical to what the artifact saw in training (the raw rd
     # dicts alone lack these columns).
     df = _attach_model_err(df, spec)
+    df = _attach_team_rel(df, spec)
     out, feat_rows = [], []
     for _, r in df.iterrows():
         rd = r.to_dict()

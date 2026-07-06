@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sandy.config import Config, load_config
 from sandy.db import create_engine
 from sandy.football.predictor import build_prediction, persist_predictions
-from sandy.football.ratings import fit_dixon_coles, load_finished_matches
+from sandy.football.ratings import fit_dixon_coles, hyper, load_finished_matches
 from sandy.football.reconciler import reconcile_predictions
 from sandy.logging import get_logger
 
@@ -83,7 +83,7 @@ def run_backtest(
         if last_fit is None or (d - last_fit).days >= refit_every_days:
             train = load_finished_matches(engine, as_of=d)
             if len(train) >= min_train:
-                model = fit_dixon_coles(train, as_of_date=d)
+                model = fit_dixon_coles(train, as_of_date=d, xi=hyper()["xi"])
                 last_fit = d
                 refits += 1
         if model is None:

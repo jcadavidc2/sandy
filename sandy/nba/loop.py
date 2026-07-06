@@ -22,6 +22,7 @@ from sqlalchemy.engine import Engine
 
 from sandy.config import Config, load_config
 from sandy.db import create_engine
+from sandy.hyper import load_hyper
 from sandy.mls.client import EspnClient
 from sandy.mls.parsers import DISPLAY_TZ
 from sandy.over_under.notifier import send_telegram
@@ -32,6 +33,16 @@ MIGRATION = Path(__file__).resolve().parent.parent / "migrations" / "add_nba_tab
 SEASON_MONTHS = {1, 2, 3, 4, 5, 6, 10, 11, 12}
 TOTAL_LINES = [210.5, 215.5, 220.5, 225.5, 230.5, 235.5, 240.5, 245.5]
 HALF_LIFE_DAYS = 120.0
+# Defaults here; models/hyper_nba.json overrides (walk-forward tuned).
+# sigma_coefs = [a, b, c]: per-game sigma^2 ≈ a + b·exp_total + c·(tot_var_10 sum)
+# used for P(over) only; None keeps the global sigma.
+HYPER_DEFAULTS = {"half_life_days": HALF_LIFE_DAYS, "ridge": 0.0, "sigma_coefs": None}
+
+
+def hyper() -> dict:
+    return load_hyper("nba", HYPER_DEFAULTS)
+
+
 MIN_TRAIN = 400
 MIN_SAMPLES = 30
 BUCKETS = [0.0, 0.4, 0.5, 0.6, 0.7, 0.8, 1.01]
@@ -158,13 +169,17 @@ def _load_games(engine: Engine, as_of: date | None = None) -> pd.DataFrame:
         """), conn, params=params)
 
 
-def fit_model(engine: Engine, as_of: date | None = None) -> NbaModel:
+def fit_model(engine: Engine, as_of: date | None = None, *,
+              half_life: float | None = None, ridge: float | None = None) -> NbaModel:
+    hyp = hyper()
+    half_life = float(hyp["half_life_days"]) if half_life is None else float(half_life)
+    ridge = float(hyp["ridge"]) if ridge is None else float(ridge)
     df = _load_games(engine, as_of)
     if len(df) < MIN_TRAIN:
         raise ValueError(f"only {len(df)} NBA games to fit")
     ref = as_of or date.today()
     ages = (pd.Timestamp(ref) - pd.to_datetime(df["match_date"])).dt.days.to_numpy(dtype=float)
-    w = np.exp(-np.log(2) * ages / HALF_LIFE_DAYS)
+    w = np.exp(-np.log(2) * ages / half_life)
     teams = sorted(set(df["home_team_id"]) | set(df["away_team_id"]))
     idx = {t: i for i, t in enumerate(teams)}
     n_t = len(teams)
@@ -178,7 +193,13 @@ def fit_model(engine: Engine, as_of: date | None = None) -> NbaModel:
         rows.append(r2); ys.append(ap); ws.append(wt)
     X = np.asarray(rows); y = np.asarray(ys, dtype=float); sw = np.sqrt(np.asarray(ws))
     mu = float(np.average(y, weights=np.repeat(w, 2)))  # baseline points per team (2 rows/game)
-    beta, *_ = np.linalg.lstsq(X * sw[:, None], (y - mu) * sw, rcond=None)
+    Xs, ys_ = X * sw[:, None], (y - mu) * sw
+    if ridge > 0:  # L2 on the team params only (hfa unpenalized)
+        R = np.zeros((2 * n_t, 2 * n_t + 1))
+        R[np.arange(2 * n_t), np.arange(2 * n_t)] = np.sqrt(ridge)
+        Xs = np.vstack([Xs, R])
+        ys_ = np.concatenate([ys_, np.zeros(2 * n_t)])
+    beta, *_ = np.linalg.lstsq(Xs, ys_, rcond=None)
     off = {t: float(beta[idx[t]]) for t in teams}
     dfn = {t: float(beta[n_t + idx[t]]) for t in teams}
     hfa = float(beta[-1])
@@ -226,8 +247,24 @@ def team_form(engine: Engine, team_id: int, as_of: date) -> dict:
         pf.append(f); pa.append(a); wins += 1 if f > a else 0
     mean = lambda xs: round(sum(xs) / len(xs), 1) if xs else None  # noqa: E731
     rest = (as_of - rows[0].match_date).days
+    totals = [float(f + a) for f, a in zip(pf, pa)]
+    tot_var = round(float(np.var(totals)), 1) if len(totals) >= 4 else None
     return {"pf_5": mean(pf[:5]), "pa_5": mean(pa[:5]), "pf_10": mean(pf), "pa_10": mean(pa),
-            "wins_10": wins, "rest_days": rest, "back_to_back": rest <= 1, "played_10": len(rows)}
+            "wins_10": wins, "rest_days": rest, "back_to_back": rest <= 1, "played_10": len(rows),
+            "tot_var_10": tot_var}
+
+
+def _sigma_for_over(model, total: float, hf: dict, af: dict) -> float:
+    """Per-game sigma for P(over) when hyper sigma_coefs shipped; global otherwise.
+    Clamped to [0.5, 2.0]× the global sigma; falls back on missing features."""
+    coefs = hyper()["sigma_coefs"]
+    hv, av = hf.get("tot_var_10"), af.get("tot_var_10")
+    if not coefs or hv is None or av is None:
+        return model.sigma_total
+    a, b, c = coefs
+    s2 = a + b * total + c * (float(hv) + float(av))
+    lo, hi = (0.5 * model.sigma_total) ** 2, (2.0 * model.sigma_total) ** 2
+    return float(np.sqrt(min(max(s2, lo), hi)))
 
 
 def _markets(model: NbaModel, engine, hid, aid, as_of, with_features=True) -> dict:
@@ -236,9 +273,11 @@ def _markets(model: NbaModel, engine, hid, aid, as_of, with_features=True) -> di
     eh, ea = model.expected(hid, aid)
     total = eh + ea
     margin = eh - ea
-    p_over = {ln: 1.0 - _phi((ln - total) / model.sigma_total) for ln in TOTAL_LINES}
+    hf, af = feats.get("home") or {}, feats.get("away") or {}
+    sigma_over = _sigma_for_over(model, total, hf, af)
+    p_over = {ln: 1.0 - _phi((ln - total) / sigma_over) for ln in TOTAL_LINES}
     return {"eh": round(eh, 1), "ea": round(ea, 1), "total": round(total, 1),
-            "sigma": round(model.sigma_total, 1),
+            "sigma": round(sigma_over, 1),
             "p_home_win": _phi(margin / model.sigma_margin), "p_over": p_over, "features": feats}
 
 

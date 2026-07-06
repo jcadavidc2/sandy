@@ -16,7 +16,7 @@ from sandy.db import create_engine
 from sandy.football.ratings import fit_dixon_coles
 from sandy.over_under.notifier import send_telegram
 
-from .model import DISPLAY_TZ, XI, load_reg_games, markets, persist_prediction
+from .model import DISPLAY_TZ, hyper, load_reg_games, markets, persist_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14,
         block_end = min(block_start + timedelta(days=refit_days - 1), hi)
         df = load_reg_games(engine, as_of=block_start)
         if len(df) >= 600:
-            model = fit_dixon_coles(df, as_of_date=block_start, xi=XI)
+            model = fit_dixon_coles(df, as_of_date=block_start, xi=hyper()["xi"])
             with engine.begin() as conn:
                 rows = conn.execute(text("""
                     SELECT g.game_id, g.match_date, g.home_team_id, g.away_team_id, t1.abbrev, t2.abbrev

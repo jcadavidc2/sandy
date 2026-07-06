@@ -38,6 +38,13 @@ DEFAULT_XI = 0.0019
 DEFAULT_REG = 0.01
 # Artifact filename for the fitted global model (loaded by the predictor).
 ARTIFACT_NAME = "football_dixoncoles.json"
+# Default above; models/hyper_worldcup.json overrides (walk-forward tuned).
+HYPER_DEFAULTS = {"xi": DEFAULT_XI}
+
+
+def hyper() -> dict:
+    from sandy.hyper import load_hyper
+    return load_hyper("worldcup", HYPER_DEFAULTS)
 
 
 @dataclass(frozen=True)
@@ -247,14 +254,17 @@ def fit_and_persist(
     config: Config | None = None,
     *,
     as_of: date | None = None,
-    xi: float = DEFAULT_XI,
+    xi: float | None = None,
 ) -> DixonColesModel:
-    """Fit Dixon-Coles on all finished matches and persist artifact + snapshot."""
+    """Fit Dixon-Coles on all finished matches and persist artifact + snapshot.
+
+    ``xi=None`` (the nightly path) resolves via models/hyper_worldcup.json,
+    falling back to DEFAULT_XI."""
     cfg = config or load_config()
     engine = create_engine(cfg)
     as_of_date = as_of or date.today()
     matches = load_finished_matches(engine, as_of=as_of)
-    model = fit_dixon_coles(matches, as_of_date=as_of_date, xi=xi)
+    model = fit_dixon_coles(matches, as_of_date=as_of_date, xi=hyper()["xi"] if xi is None else xi)
     save_model(model, cfg.model.model_dir / ARTIFACT_NAME)
     _persist_team_ratings(engine, model)
     return model

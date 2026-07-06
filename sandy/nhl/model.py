@@ -20,6 +20,7 @@ from sandy.config import Config, load_config
 from sandy.db import create_engine
 from sandy.football.predictor import compute_scoreline_matrix
 from sandy.football.ratings import DixonColesModel, fit_dixon_coles, load_model, save_model
+from sandy.hyper import load_hyper
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,14 @@ XI = 0.0038                      # ~6-month half-life
 TOTAL_THRESHOLDS = [3.5, 4.5, 5.5, 6.5, 7.5, 8.5]
 MAX_GOALS = 12
 FORM_BLEND_WEIGHT = 0.2
+# Defaults above; models/hyper_nhl.json overrides (walk-forward tuned).
+# b2b_factor multiplies a team's lambda when it plays on back-to-back nights
+# (1.0 = no fatigue adjustment).
+HYPER_DEFAULTS = {"xi": XI, "blend": FORM_BLEND_WEIGHT, "b2b_factor": 1.0}
+
+
+def hyper() -> dict:
+    return load_hyper("nhl", HYPER_DEFAULTS)
 
 
 def load_reg_games(engine: Engine, as_of: date | None = None) -> pd.DataFrame:
@@ -46,7 +55,7 @@ def load_reg_games(engine: Engine, as_of: date | None = None) -> pd.DataFrame:
 
 def fit_goals(engine: Engine, as_of: date | None = None) -> DixonColesModel:
     df = load_reg_games(engine, as_of)
-    model = fit_dixon_coles(df, as_of_date=as_of or date.today(), xi=XI)
+    model = fit_dixon_coles(df, as_of_date=as_of or date.today(), xi=hyper()["xi"])
     logger.info("NHL goals model fit: %s games, home_adv=%.3f", model.n_matches, model.home_adv)
     return model
 
@@ -98,20 +107,28 @@ def team_form(engine: Engine, team_id: int, as_of: date) -> dict:
             "played_10": len(rows)}
 
 
-def _blend(lam: float, form_gf: float | None, opp_ga: float | None) -> float:
-    if form_gf is None or opp_ga is None:
+def _blend(lam: float, form_gf: float | None, opp_ga: float | None,
+           weight: float = FORM_BLEND_WEIGHT) -> float:
+    if form_gf is None or opp_ga is None or weight <= 0:
         return lam
-    return (1 - FORM_BLEND_WEIGHT) * lam + FORM_BLEND_WEIGHT * (form_gf + opp_ga) / 2.0
+    return (1 - weight) * lam + weight * (form_gf + opp_ga) / 2.0
 
 
 def markets(model: DixonColesModel, engine: Engine, home_id: int, away_id: int,
             as_of: date, with_features: bool = True) -> dict:
+    hp = hyper()
     feats = {"home": team_form(engine, home_id, as_of),
              "away": team_form(engine, away_id, as_of)} if with_features else {}
     lam, mu = model.expected_goals(home_id, away_id)
     hf, af = feats.get("home") or {}, feats.get("away") or {}
-    lam = _blend(lam, hf.get("gf_5"), af.get("ga_5"))
-    mu = _blend(mu, af.get("gf_5"), hf.get("ga_5"))
+    lam = _blend(lam, hf.get("gf_5"), af.get("ga_5"), hp["blend"])
+    mu = _blend(mu, af.get("gf_5"), hf.get("ga_5"), hp["blend"])
+    # Tuned back-to-back fatigue: shrink a tired team's scoring rate.
+    if hp["b2b_factor"] != 1.0:
+        if hf.get("back_to_back"):
+            lam *= hp["b2b_factor"]
+        if af.get("back_to_back"):
+            mu *= hp["b2b_factor"]
     m = compute_scoreline_matrix(lam, mu, model.rho, max_goals=MAX_GOALS)
     idx = np.arange(m.shape[0])
     hi, aj = np.meshgrid(idx, idx, indexing="ij")

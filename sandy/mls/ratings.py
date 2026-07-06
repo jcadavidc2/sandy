@@ -15,11 +15,18 @@ from sqlalchemy.engine import Engine
 from sandy.config import Config, load_config
 from sandy.db import create_engine
 from sandy.football.ratings import DixonColesModel, fit_dixon_coles, load_model, save_model
+from sandy.hyper import load_hyper
 
 logger = logging.getLogger(__name__)
 
 GOALS_XI = 0.0038   # ~6-month half-life: club form moves faster than national teams
 CORNERS_XI = 0.0038
+# Walk-forward-tuned overrides (scripts/tune_base.py); missing file = these defaults.
+HYPER_DEFAULTS = {"xi_goals": GOALS_XI, "xi_corners": CORNERS_XI, "blend_goals": 0.2}
+
+
+def hyper() -> dict:
+    return load_hyper("mls", HYPER_DEFAULTS)
 
 
 def _load_df(engine: Engine, cols: str, extra_where: str = "", as_of: date | None = None) -> pd.DataFrame:
@@ -51,7 +58,7 @@ def load_corner_matches(engine: Engine, as_of: date | None = None) -> pd.DataFra
 
 def fit_goals(engine: Engine, as_of: date | None = None) -> DixonColesModel:
     df = load_goal_matches(engine, as_of)
-    model = fit_dixon_coles(df, as_of_date=as_of or date.today(), xi=GOALS_XI)
+    model = fit_dixon_coles(df, as_of_date=as_of or date.today(), xi=hyper()["xi_goals"])
     logger.info("MLS goals model fit: %s matches, home_adv=%.3f rho=%.3f",
                 model.n_matches, model.home_adv, model.rho)
     return model
@@ -59,7 +66,7 @@ def fit_goals(engine: Engine, as_of: date | None = None) -> DixonColesModel:
 
 def fit_corners(engine: Engine, as_of: date | None = None) -> DixonColesModel:
     df = load_corner_matches(engine, as_of)
-    model = fit_dixon_coles(df, as_of_date=as_of or date.today(), xi=CORNERS_XI)
+    model = fit_dixon_coles(df, as_of_date=as_of or date.today(), xi=hyper()["xi_corners"])
     logger.info("MLS corners model fit: %s matches, home_adv=%.3f",
                 model.n_matches, model.home_adv)
     return model
