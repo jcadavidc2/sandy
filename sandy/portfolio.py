@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 
 INITIAL_BANK = 100_000.0        # paper COP-like units
 STEP = 500.0                    # BetPlay minimum bet / stake granularity
-BUDGET_FRACTION = 0.10          # daily budget = 10% of available bankroll
+BUDGET_FRACTION = 0.20          # daily budget = 20% of available bankroll (user: grow faster)
 GAME_CAP_FRACTION = 0.30        # max exposure to ONE game across all tickets
 MAX_PARLAY_LEGS = 7
 MAX_PARLAY_POOL = 16            # enumerate parlays from the top-EV candidates only
