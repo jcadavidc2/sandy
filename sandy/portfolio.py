@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 
 INITIAL_BANK = 100_000.0        # paper COP-like units
 STEP = 500.0                    # BetPlay minimum bet / stake granularity
-BUDGET_FRACTION = 0.20          # daily budget = 20% of available bankroll (user: grow faster)
+BUDGET_FRACTION = 0.30          # daily budget = 30% of available bankroll (user)
 GAME_CAP_FRACTION = 0.30        # max exposure to ONE game across all tickets
 MAX_PARLAY_LEGS = 7
 MAX_PARLAY_POOL = 16            # enumerate parlays from the top-EV candidates only
@@ -91,7 +91,7 @@ SHRINK_MODEL_WEIGHT = 0.70      # p_bet = 0.7·ours + 0.3·market (edge shrinkag
 
 # risk dial → Kelly fraction (virtual bankroll V = bank * fraction)
 RISKS = {"Conservador": 1 / 8, "Balanceado": 1 / 4, "Agresivo": 1 / 2}
-DEFAULT_RISK = "Balanceado"
+DEFAULT_RISK = "Agresivo"       # official daily portfolio risk (user choice, ½-Kelly)
 
 _UNITS = {"mlb": "carreras", "nba": "puntos"}  # everything else: goles
 

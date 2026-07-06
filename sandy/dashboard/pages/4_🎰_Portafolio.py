@@ -134,13 +134,13 @@ max_b = int(max(P.floor500(bank_basis), P.STEP))
 budget = c1.slider("Presupuesto del día ($)", 0, max_b,
                    int(min(P.default_budget(bank_basis), max_b)), step=int(P.STEP),
                    help="Cuánto se permitiría apostar HOY como máximo en esta simulación. "
-                        "El oficial usa el 20% de la banca. Moverlo NO guarda nada.")
-risk = c2.radio("Riesgo", list(P.RISKS), index=1, horizontal=True,
+                        "El oficial usa el 30% de la banca. Moverlo NO guarda nada.")
+risk = c2.radio("Riesgo", list(P.RISKS), index=2, horizontal=True,
                 help="Qué tan agresivo es el tamaño de las apuestas (fracción de Kelly): "
-                     "Conservador = ⅛, Balanceado = ¼ (el oficial), Agresivo = ½. "
+                     "Conservador = ⅛, Balanceado = ¼, Agresivo = ½ (el oficial), Agresivo = ½. "
                      "Más riesgo = más ganancia esperada pero bajones más feos.")
 c3.metric("Presupuesto oficial", f"${P.default_budget(bank_basis):,.0f}",
-          help="El techo real del día: 20% de la banca. El slider de la izquierda es solo "
+          help="El techo real del día: 30% de la banca. El slider de la izquierda es solo "
                "para explorar escenarios.")
 
 res = _whatif(day, float(budget), risk)
@@ -218,7 +218,7 @@ st.divider()
 st.subheader("🔮 Proyección de la banca (30 y 90 días)")
 st.caption("Monte Carlo: simulamos miles de futuros donde cada día se parece a los días "
            "recientes registrados (misma cantidad de apuestas y ventajas, incluyendo días sin "
-           "valor), reinvirtiendo el 20% de la banca. Banda gris de la realidad: la mitad de "
+           "valor), reinvirtiendo el 30% de la banca. Banda gris de la realidad: la mitad de "
            "los futuros cae entre la línea pesimista (25%) y la optimista (75%).")
 
 proj = _projection(day)
