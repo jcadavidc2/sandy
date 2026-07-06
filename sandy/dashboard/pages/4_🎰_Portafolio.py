@@ -87,30 +87,61 @@ bank_basis = _bank_before(day)
 hist = _tickets_hist()
 persisted_today = hist[hist["date"] == day] if not hist.empty else pd.DataFrame()
 
-# ------------------------------------------------------------ today + what-if
-st.subheader(f"📅 Portafolio de hoy · {day.strftime('%d/%m/%Y')}")
+# ----------------------------------------------------------- OFFICIAL first
+st.subheader(f"📌 Portafolio OFICIAL de hoy · {day.strftime('%d/%m/%Y')}")
+o1, o2, o3, o4 = st.columns(4)
+o1.metric("Banca disponible", f"${bank:,.0f}",
+          help="Plata de papel libre ahora (lo apostado en tiquetes abiertos está descontado).")
+o2.metric("Presupuesto del día", f"${P.default_budget(bank_basis):,.0f}",
+          help=f"Regla fija: {P.BUDGET_FRACTION:.0%} de la banca con que amaneció el día "
+               f"(${bank_basis:,.0f}), en pasos de $500. Es el TECHO — el optimizador solo usa "
+               "lo que el valor del día justifica.")
+if not persisted_today.empty:
+    o3.metric("Apostado hoy (oficial)", f"${persisted_today['stake'].sum():,.0f}")
+    o4.metric("Tiquetes", f"{len(persisted_today)}")
+    ICON_O = {"won": "✓ ganada", "lost": "✗ perdida", "open": "⏳ abierta", "void": "↩ anulada"}
+    st.dataframe(pd.DataFrame({
+        "Apuesta": persisted_today["ticket_id"].map(lambda i: f"Apuesta {i}"),
+        "Tipo": persisted_today["tipo"],
+        "Tiquete": persisted_today["tiquete"],
+        "Cuota": persisted_today["ticket_cuota"],
+        "Apostado": persisted_today["stake"],
+        "Ganaría": persisted_today["stake"] * persisted_today["ticket_cuota"],
+        "Estado": persisted_today["status"].map(ICON_O),
+    }), use_container_width=True, hide_index=True,
+        column_config={
+            "Tipo": st.column_config.TextColumn(help="Individual = un pick. Combinada xN = N "
+                                                "partidos distintos; deben acertar TODOS."),
+            "Cuota": st.column_config.NumberColumn(format="%.2f"),
+            "Apostado": st.column_config.NumberColumn(format="$%.0f"),
+            "Ganaría": st.column_config.NumberColumn(format="$%.0f",
+                help="Lo que devuelve si acierta (apostado × cuota)."),
+        })
+    st.caption("Este es el registro REAL del día (congelado antes de los partidos, se liquida "
+               "solo a la mañana siguiente). Aquí ves si el día fue de individuales, combinadas "
+               "o mezcla, y cuánto se puso en cada una.")
+else:
+    o3.metric("Apostado hoy (oficial)", "—")
+    o4.metric("Tiquetes", "—")
+    st.info("💾 El portafolio oficial de hoy aún no se guarda — se arma solo a las "
+            "8:15 AM Bogotá (tras cuotas y liquidación de ayer). Si ese día no hay valor, "
+            "quedará '$0 apostado' y también es una decisión oficial.")
+
+st.divider()
+st.subheader("🧪 Simulador «¿y si…?» — jugar con presupuesto y riesgo (NO cambia lo oficial)")
 c1, c2, c3 = st.columns([2, 1.6, 1.2])
 max_b = int(max(P.floor500(bank_basis), P.STEP))
 budget = c1.slider("Presupuesto del día ($)", 0, max_b,
                    int(min(P.default_budget(bank_basis), max_b)), step=int(P.STEP),
-                   help="Cuánto se permite apostar HOY como máximo. Por defecto: 10% de la "
-                        "banca disponible. Moverlo recalcula el portafolio al vuelo (what-if); "
-                        "el portafolio OFICIAL del día se guarda con el valor por defecto.")
+                   help="Cuánto se permitiría apostar HOY como máximo en esta simulación. "
+                        "El oficial usa el 20% de la banca. Moverlo NO guarda nada.")
 risk = c2.radio("Riesgo", list(P.RISKS), index=1, horizontal=True,
                 help="Qué tan agresivo es el tamaño de las apuestas (fracción de Kelly): "
                      "Conservador = ⅛, Balanceado = ¼ (el oficial), Agresivo = ½. "
                      "Más riesgo = más ganancia esperada pero bajones más feos.")
-c3.metric("Banca disponible", f"${bank:,.0f}",
-          help="Plata de papel libre ahora mismo (lo apostado en tiquetes abiertos está "
-               "descontado hasta que se liquiden).")
-
-if not persisted_today.empty:
-    st.caption(f"💾 Portafolio OFICIAL de hoy ya guardado: {len(persisted_today)} tiquete(s), "
-               f"${persisted_today['stake'].sum():,.0f} apostados (presupuesto y riesgo por "
-               "defecto). Con los controles por defecto la tabla de abajo lo reproduce exacto.")
-else:
-    st.caption("💾 El portafolio oficial del día se guarda automáticamente a las 14:15 UTC "
-               "(9:15 AM Bogotá) tras la corrida de cuotas. Lo de abajo es el cálculo en vivo.")
+c3.metric("Presupuesto oficial", f"${P.default_budget(bank_basis):,.0f}",
+          help="El techo real del día: 20% de la banca. El slider de la izquierda es solo "
+               "para explorar escenarios.")
 
 res = _whatif(day, float(budget), risk)
 
@@ -187,7 +218,7 @@ st.divider()
 st.subheader("🔮 Proyección de la banca (30 y 90 días)")
 st.caption("Monte Carlo: simulamos miles de futuros donde cada día se parece a los días "
            "recientes registrados (misma cantidad de apuestas y ventajas, incluyendo días sin "
-           "valor), reinvirtiendo el 10% de la banca. Banda gris de la realidad: la mitad de "
+           "valor), reinvirtiendo el 20% de la banca. Banda gris de la realidad: la mitad de "
            "los futuros cae entre la línea pesimista (25%) y la optimista (75%).")
 
 proj = _projection(day)
