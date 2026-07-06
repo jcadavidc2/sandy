@@ -121,11 +121,21 @@ if not persisted_today.empty:
                "solo a la mañana siguiente). Aquí ves si el día fue de individuales, combinadas "
                "o mezcla, y cuánto se puso en cada una.")
 else:
-    o3.metric("Apostado hoy (oficial)", "—")
-    o4.metric("Tiquetes", "—")
-    st.info("💾 El portafolio oficial de hoy aún no se guarda — se arma solo a las "
-            "8:15 AM Bogotá (tras cuotas y liquidación de ayer). Si ese día no hay valor, "
-            "quedará '$0 apostado' y también es una decisión oficial.")
+    _bk0 = _bankroll()
+    day_decided = (not _bk0.empty) and (day in set(_bk0["date"]))
+    if day_decided:
+        o3.metric("Apostado hoy (oficial)", "$0")
+        o4.metric("Tiquetes", "0")
+        st.success("✅ Decisión OFICIAL de hoy ya guardada: **$0 apostado**. Hubo candidatos "
+                   "en 💰 Valor, pero ninguno sobrevivió el recorte prudente (70% nuestra "
+                   "probabilidad + 30% la del mercado) contra la cuota real. No apostar en "
+                   "días así es exactamente lo que protege la banca.")
+    else:
+        o3.metric("Apostado hoy (oficial)", "—")
+        o4.metric("Tiquetes", "—")
+        st.info("💾 El portafolio oficial de hoy aún no se guarda — se arma solo a las "
+                "8:15 AM Bogotá (tras cuotas y liquidación de ayer). Si ese día no hay valor, "
+                "quedará '$0 apostado' y también es una decisión oficial.")
 
 st.divider()
 st.subheader("🧪 Simulador «¿y si…?» — jugar con presupuesto y riesgo (NO cambia lo oficial)")
