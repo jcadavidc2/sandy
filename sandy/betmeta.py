@@ -106,6 +106,20 @@ SPECS = {
         "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
         "err_expected": ["exp_total"], "err_actual": "actual_total",
     },
+    "nfl": {
+        "schema": "nfl", "table": "nfl.game_predictions",
+        "markets": {
+            "winner": ("p_home_win", "winner", None),
+            "over_37_5": ("p_over_37_5", "points", 37.5),
+            "over_41_5": ("p_over_41_5", "points", 41.5),
+            "over_44_5": ("p_over_44_5", "points", 44.5),
+            "over_47_5": ("p_over_47_5", "points", 47.5),
+            "over_51_5": ("p_over_51_5", "points", 51.5),
+        },
+        "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win"],
+        "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
+        "err_expected": ["exp_total"], "err_actual": "actual_total",
+    },
     "nhl": {
         "schema": "nhl", "table": "nhl.game_predictions",
         "markets": {
@@ -178,7 +192,7 @@ def _correct(row, kind: str, line: float | None, p: float) -> bool | None:
         return pick_yes == (res != "A")
     if kind == "winner":
         w = row.get("actual_winner")
-        if w is None:
+        if w is None or w == "T":  # NFL ties: a winner pick can't be graded
             return None
         return pick_yes == (w == "H")
     if kind == "btts":

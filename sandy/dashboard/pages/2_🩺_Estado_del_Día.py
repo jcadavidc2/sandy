@@ -29,6 +29,7 @@ JOBS = [
     ("⚽ MLS nightly", "mls.log", (12, 30)),
     ("🏒 NHL nightly", "nhl.log", (12, 45)),
     ("🏀 NBA nightly", "nba.log", (12, 50)),
+    ("🏈 NFL nightly", "nfl.log", (12, 55)),
     ("🏆 Mundial nightly", "football.log", (13, 0)),
     ("🤖 Metas extra + refinador + refresh web", "metas_extra.log", (13, 30)),
     ("⚾ MLB predicciones del día", "over_under.log", (13, 5)),

@@ -93,7 +93,7 @@ SHRINK_MODEL_WEIGHT = 0.70      # p_bet = 0.7·ours + 0.3·market (edge shrinkag
 RISKS = {"Conservador": 1 / 8, "Balanceado": 1 / 4, "Agresivo": 1 / 2}
 DEFAULT_RISK = "Agresivo"       # official daily portfolio risk (user choice, ½-Kelly)
 
-_UNITS = {"mlb": "carreras", "nba": "puntos"}  # everything else: goles
+_UNITS = {"mlb": "carreras", "nba": "puntos", "nfl": "puntos"}  # everything else: goles
 
 
 # ------------------------------------------------------------------- schema --

@@ -86,6 +86,7 @@ from sandy.cli.mls_cmd import mls
 from sandy.cli.nhl_cmd import nhl
 from sandy.cli.soccer_cmd import soccer
 from sandy.cli.nba_cmd import nba  # noqa: E402
+from sandy.cli.nfl_cmd import nfl  # noqa: E402
 
 cli.add_command(ingest)
 cli.add_command(labels)
@@ -101,6 +102,7 @@ cli.add_command(mls)
 cli.add_command(nhl)
 cli.add_command(soccer)
 cli.add_command(nba)
+cli.add_command(nfl)
 
 
 if __name__ == "__main__":  # pragma: no cover

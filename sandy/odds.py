@@ -78,6 +78,7 @@ DISPLAY_TZ = ZoneInfo("America/Los_Angeles")
 SPORT_KEYS = {
     "mlb": "baseball_mlb",
     "nba": "basketball_nba",
+    "nfl": "americanfootball_nfl",
     "nhl": "icehockey_nhl",
     "mls": "soccer_usa_mls",
     "soccer_eng": "soccer_epl",
@@ -114,6 +115,9 @@ ALIASES: dict[str, dict[str, str]] = {
     # renamed the franchise to 'ATH' — the alias must beat the automatic map
     "mlb": {"athletics": "OAK", "oakland athletics": "OAK"},
     "nhl": {"utah hockey club": "UTA", "st louis blues": "STL"},
+    # TheOddsAPI uses ESPN-style full names for NFL; defensive short forms only
+    "nfl": {"washington": "WSH", "la rams": "LAR", "la chargers": "LAC",
+            "washington football team": "WSH"},
     "worldcup": {"united states": "USA", "usa": "USA", "south korea": "South Korea",
                  "ivory coast": "Ivory Coast"},
     "mls": {"los angeles galaxy": "LA Galaxy", "los angeles fc": "LAFC",
@@ -196,6 +200,10 @@ def _team_map(league: str, conn) -> dict[str, str]:
             out[_norm(name)] = code.strip()
     elif league == "nba":
         for abbrev, name in conn.execute(text("SELECT abbrev, name FROM nba.teams")):
+            out[_norm(name)] = abbrev
+    elif league == "nfl":
+        # predictions store the abbrev; the API uses ESPN-style full names
+        for abbrev, name in conn.execute(text("SELECT abbrev, name FROM nfl.teams")):
             out[_norm(name)] = abbrev
     elif league == "nhl":
         for abbrev, full in NHL_FULL.items():

@@ -23,6 +23,7 @@ LEAGUES = {
     "mls": ("⚽", "MLS"),
     "nhl": ("🏒", "NHL"),
     "nba": ("🏀", "NBA"),
+    "nfl": ("🏈", "NFL"),
     "worldcup": ("🏆", "Mundial 2026"),
     "mlb": ("⚾", "MLB"),
 }
@@ -43,6 +44,8 @@ def market_label(market: str, kind: str | None = None) -> str:
     line = market.rsplit("over_", 1)[-1].replace("_", ".")
     if kind == "runs":
         return f"Carreras {line}"
+    if kind == "points":  # NBA and NFL totals are points at ANY line (NFL ~44.5)
+        return f"Puntos {line}"
     if market.startswith("corners_"):
         return f"Corners {line}"
     return f"Puntos {line}" if float(line) > 50 else f"Goles {line}"

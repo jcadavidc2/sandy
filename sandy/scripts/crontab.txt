@@ -34,6 +34,8 @@ PATH=/usr/local/bin:/usr/bin:/bin:/home/ec2-user/.local/bin
 15 12 * * * /home/ec2-user/sandy/scripts/soccer_nightly.sh >> /home/ec2-user/sandy/logs/soccer.log 2>&1
 # Sandy NBA nightly (5:50 AM PST)
 50 12 * * * /home/ec2-user/sandy/scripts/nba_nightly.sh >> /home/ec2-user/sandy/logs/nba.log 2>&1
+# Sandy NFL nightly (5:55 AM PST)
+55 12 * * * /home/ec2-user/sandy/scripts/nfl_nightly.sh >> /home/ec2-user/sandy/logs/nfl.log 2>&1
 
 # Sandy dashboard (streamlit multipage, localhost:8502; VS Code port-forward or tunnel)
 @reboot sleep 30 && /home/ec2-user/sandy/scripts/dashboard.sh >> /home/ec2-user/sandy/logs/dashboard.log 2>&1
