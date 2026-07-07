@@ -148,6 +148,19 @@ def _pick_label(league: str, market: str, side: str, line, home: str, away: str)
 
 
 # --------------------------------------------------------------- candidates --
+def started_games(engine, day: date) -> set:
+    """(league, home, away) of today's games whose kickoff already passed —
+    the sims/builds must never (re)offer an in-progress game."""
+    from sqlalchemy import text as _t
+    with engine.begin() as conn:
+        rows = conn.execute(_t("""
+            SELECT DISTINCT league, COALESCE(our_home, event_home), COALESCE(our_away, event_away)
+            FROM odds.market_odds
+            WHERE commence_utc <= now() AND commence_utc::date >= :d
+        """), {"d": day}).fetchall()
+    return {(r[0], (r[1] or '').strip(), (r[2] or '').strip()) for r in rows}
+
+
 def candidates_for(day: date, engine) -> list[dict]:
     """Value picks for the day → ONE candidate per game (highest shrunk EV).
 
@@ -163,6 +176,7 @@ def candidates_for(day: date, engine) -> list[dict]:
             WHERE date = :d AND result IS NULL AND edge > 0
             ORDER BY id
         """), {"d": day}).fetchall()
+    _started = started_games(engine, day)
     best: dict[tuple, dict] = {}
     for r in rows:
         prob, cuota, edge = float(r.prob), float(r.cuota), float(r.edge)
@@ -173,7 +187,9 @@ def candidates_for(day: date, engine) -> list[dict]:
         ev_prudente = p_bet * (cuota - 1.0) - (1.0 - p_bet)
         if edge_prudente <= 0 or ev_prudente <= 0:
             continue
-        game = (r.league, r.home, r.away)
+        game = (r.league, (r.home or '').strip(), (r.away or '').strip())
+        if game in _started:
+            continue  # game already kicked off — not biddable anymore
         cand = {
             "vl_id": r.id, "date": str(r.date), "game": game,
             "liga": r.league, "liga_titulo": _league_title(r.league),

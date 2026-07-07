@@ -130,6 +130,8 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
     pick with a price is a candidate, even when the market disagrees with us.
     Probabilities stay RAW (p_bet = prob — no market shrink, by design)."""
     cfg = cfg or load_config()
+    from sandy.portfolio import started_games
+    _started = started_games(engine, day)
     out: list[dict] = []
     game_best: dict[tuple, tuple] = {}   # (league,home,away) -> (best 🤖, market)
     for league in SPECS:
@@ -147,6 +149,8 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
         for r in rows:
             rd = dict(r._mapping)
             home, away = (rd["home_team"] or "").strip(), (rd["away_team"] or "").strip()
+            if (league, home, away) in _started:
+                continue  # game already kicked off — not biddable anymore
             for market, (pcol, kind, line) in spec["markets"].items():
                 p = rd.get(pcol)
                 if p is None:

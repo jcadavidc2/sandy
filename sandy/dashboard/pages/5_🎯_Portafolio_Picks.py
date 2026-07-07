@@ -147,6 +147,7 @@ else:
 
 st.divider()
 st.subheader("🧪 Simulador «¿y si…?» — presupuesto y riesgo (NO cambia lo oficial)")
+st.warning("⚠️ Esto es una CALCULADORA EN VIVO, no el registro: se recalcula al abrir la página, los partidos que ya empezaron desaparecen y las cuotas cambian. El registro REAL y congelado del día es ÚNICAMENTE la tabla 📌 de arriba — eso es lo que se liquida mañana.")
 c1, c2, c3 = st.columns([2, 1.6, 1.2])
 max_b = int(max(PA.floor500(bank_basis), PA.STEP))
 budget = c1.slider("Presupuesto del día ($)", 0, max_b,
