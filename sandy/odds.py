@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.the-odds-api.com/v4"
 REGIONS = "eu"
-MARKETS = "totals,h2h,alternate_totals"  # alternates fill cuotas for our non-main lines (+1 credit/league-day)
+MARKETS = "totals,h2h"
 MIN_EDGE = 0.03  # 3 percentage points
 
 # All verticals use the America/Los_Angeles calendar date of kickoff as
@@ -382,6 +382,50 @@ def fetch_league(league: str, sport_key: str, engine) -> dict:
             """), rows)
     logger.info("%s: stored %d odds rows across %d events", league, len(rows), len(events or []))
     return {"league": league, "events": len(events or []), "rows": len(rows)}
+
+
+# Alternate totals are only sold PER EVENT on this API (1 credit per event).
+# Fetch them TARGETED: only pending events fetched today, capped, so credit
+# spend stays ~<=ALT_MAX_EVENTS/day on top of the bulk fetch.
+ALT_MAX_EVENTS = 10
+
+
+def fetch_alternates(league: str, sport_key: str, engine, max_events: int = ALT_MAX_EVENTS) -> dict:
+    """Per-event alternate_totals for today's PENDING events (more lines get
+    cuotas → bigger pools for Valor/Portafolios). Skips events that already
+    have alternate coverage today (>=4 distinct total lines)."""
+    with engine.begin() as conn:
+        evs = conn.execute(text("""
+            SELECT event_id, MIN(commence_utc) AS c
+            FROM odds.market_odds
+            WHERE league = :lg AND commence_utc > now()
+              AND fetched_at::date = CURRENT_DATE
+            GROUP BY event_id
+            HAVING COUNT(DISTINCT point) FILTER (WHERE market = 'totals') < 4
+            ORDER BY 2 LIMIT :cap"""), {"lg": league, "cap": max_events}).fetchall()
+    done, rows_total = 0, 0
+    for eid, _c in evs:
+        try:
+            ev, _h = _get(f"/sports/{sport_key}/events/{eid}/odds",
+                          regions=REGIONS, markets="alternate_totals", oddsFormat="decimal")
+        except Exception as exc:  # noqa: BLE001 — best-effort per event
+            logger.info("%s alt %s: %s", league, eid, exc)
+            continue
+        rows = _event_rows(league, sport_key, ev or {})
+        if rows:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO odds.market_odds
+                        (sport_key, league, event_id, event_home, event_away, commence_utc,
+                         book, market, point, side, price, implied, implied_novig)
+                    VALUES (:sport_key, :league, :event_id, :event_home, :event_away,
+                            :commence_utc, :book, :market, :point, :side, :price,
+                            :implied, :implied_novig)
+                """), rows)
+            rows_total += len(rows)
+        done += 1
+    logger.info("%s: alternates for %d events (%d rows)", league, done, rows_total)
+    return {"league": league, "alt_events": done, "alt_rows": rows_total}
 
 
 # -------------------------------------------------------------------- match --
@@ -732,6 +776,9 @@ def run_daily(day: date | None = None, cfg: Config | None = None) -> dict:
                             league)
                 continue
             report["fetched"].append(fetch_league(league, sport_key, engine))
+            # Targeted alternate totals (per-event endpoint): more lines get a
+            # cuota. Self-limiting: skips events already holding >=4 lines.
+            report["fetched"].append(fetch_alternates(league, sport_key, engine))
             report["match"][league] = match_league(league, engine)
         except Exception:
             logger.exception("odds daily: league %s failed (non-fatal)", league)

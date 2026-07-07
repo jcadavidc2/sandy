@@ -38,6 +38,8 @@ with st.expander("📖 Cómo leer esta página (y en qué se diferencia del 🎰
   nuestras propias probabilidades, igual se despliega el {P.MIN_DEPLOY_FRACTION:.0%} del
   presupuesto del día (mínimo un tiquete de $500) en la mejor combinación disponible — "la
   menos mala". Solo un día SIN picks ✅ con cuota queda en $0.
+- **⚠️sust. en un tiquete** = el pick exacto de Picks del Día para ese juego no tiene cuota
+  en el mercado, así que B apuesta el MEJOR pick con cuota de ese mismo juego (el sustituto).
 - **Esto es un experimento, no una recomendación.** Apostar sin ventaja de mercado pierde plata
   a largo plazo *si el mercado tiene razón*; gana *si nuestros modelos ven algo que el mercado
   no*. **Espera rachas perdedoras** — posiblemente largas. Para eso existe.

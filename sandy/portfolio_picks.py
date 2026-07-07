@@ -131,6 +131,7 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
     Probabilities stay RAW (p_bet = prob — no market shrink, by design)."""
     cfg = cfg or load_config()
     out: list[dict] = []
+    game_best: dict[tuple, tuple] = {}   # (league,home,away) -> (best 🤖, market)
     for league in SPECS:
         idx = odds_index(league, day, day, engine)
         if not idx:
@@ -148,15 +149,23 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
             home, away = (rd["home_team"] or "").strip(), (rd["away_team"] or "").strip()
             for market, (pcol, kind, line) in spec["markets"].items():
                 p = rd.get(pcol)
-                mapping = market_to_api(league, market)
-                if p is None or mapping is None:
-                    continue  # no prediction / no odds feed for this market
+                if p is None:
+                    continue  # no prediction for this market
                 p = float(p)
                 prob = p if p >= 0.5 else 1 - p   # the pick's own side prob (NOT 🤖)
                 mp = score_candidate(league, cfg, rd, market, p)
                 thr = market_threshold(league, cfg, market)
                 if mp is None or thr is None or mp < thr:
                     continue  # only ✅ meta-approved picks — B's whole pool
+                # Track the game's OVERALL best 🤖 among ALL ✅ picks (priced or
+                # not): used for the "⚠️sust." mark when the true Picks del Día
+                # pick has no cuota and B bets the best PRICED one instead.
+                gk = (league, home, away)
+                if gk not in game_best or mp > game_best[gk][0]:
+                    game_best[gk] = (mp, market)
+                mapping = market_to_api(league, market)
+                if mapping is None:
+                    continue  # no odds feed for this market (corners/BTTS/NHL-1X)
                 api_market, pt = mapping
                 side = pick_side(kind, p)
                 hit = idx.get((day, home, away, api_market, pt, side))
@@ -181,6 +190,13 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
                     "edge": None if novig is None else round(prob - float(novig), 4),
                     "ev": round(ev, 4),
                 })
+    # ⚠️sust. — the selected candidate is NOT the game's overall best-🤖 pick
+    # (the exact Picks del Día pick has no cuota); mark it in every label.
+    for c in out:
+        bm = game_best.get(c["game"])
+        c["sustituto"] = bool(bm and bm[1] != c["market"])
+        if c["sustituto"]:
+            c["pick"] = f"{c['pick']} ⚠️sust."
     return best_per_game(out)
 
 
