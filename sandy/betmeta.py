@@ -47,9 +47,17 @@ MODEL_ERR_FEATURES = ("h_model_err", "h_model_abs_err", "a_model_err", "a_model_
 REL_WINDOW = 12
 TEAM_REL_FEATURES = ("h_base_rel", "h_base_rel_n", "a_base_rel", "a_base_rel_n")
 
+# Game-time WEATHER covariates (open-meteo via sandy/weather.py) — only for
+# leagues whose spec declares a "wx_key" (the game-id column joining
+# odds.game_weather.game_key: MLB game_pk / NFL event_id). wx_dome is 1.0 for
+# fixed roofs, 0.5 retractable, 0.0 open (see weather.roof_score). Same bulk
+# (_attach_weather) / live (weather.live_wx: DB row, else on-the-fly forecast
+# upsert for pending games, NaN on failure) equality contract as MODEL_ERR.
+WX_FEATURES = ("wx_temp", "wx_wind", "wx_precip", "wx_dome")
+
 # Bump when the _frame/_row_features feature schema changes — downstream caches
 # (betrefine's OOF store) key on this so a feature upgrade invalidates them.
-FRAME_VERSION = 2
+FRAME_VERSION = 3
 
 # league → (schema, predictions table, markets: name → (prob col, kind, line))
 SPECS = {
@@ -132,6 +140,13 @@ SPECS = {
         "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win"],
         "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
         "err_expected": ["exp_total"], "err_actual": "actual_total",
+        # Weather covariates DORMANT for the NFL: the 2026-07-07 gated retrain
+        # with wx_* fell on test AUC (0.6163 -> 0.6103; acc@thr was fine), so
+        # the artifact was reverted and the frame stays weatherless here — the
+        # nightly `sandy nfl meta` retrain is ungated and must not resurrect
+        # them. odds.game_weather keeps accumulating NFL rows (backfilled
+        # 2022-09+ and refreshed daily by odds_daily.sh); to re-gate later add:
+        # "wx_key": "event_id",
     },
     "nhl": {
         "schema": "nhl", "table": "nhl.game_predictions",
@@ -192,6 +207,7 @@ SPECS = {
         "err_expected": ["home_expected_runs", "away_expected_runs"],
         "err_actual": "actual_total_runs",
         "no_snapshot": True, "no_backtest_col": True,
+        "wx_key": "game_pk",  # odds.game_weather join (weather covariates)
     },
 }
 
@@ -347,6 +363,30 @@ def _attach_team_rel(df: pd.DataFrame, spec: dict) -> pd.DataFrame:
         cols["a_base_rel_n"].append(an)
     for c, v in cols.items():
         df[c] = v
+    return df
+
+
+def _attach_weather(df: pd.DataFrame, spec: dict, league: str, engine) -> pd.DataFrame:
+    """Bulk path for WX_FEATURES: join odds.game_weather by the spec's wx_key
+    column (MLB game_pk / NFL event_id). Leagues without a wx_key are returned
+    UNCHANGED (their feature schema stays weatherless). Values go through the
+    same weather.wx_tuple conversion the live path uses — value-identical with
+    weather.live_wx by construction; games without a stored row get NaNs
+    (LightGBM routes missing to the default branch)."""
+    key_col = spec.get("wx_key")
+    if not key_col:
+        return df
+    df = df.copy()
+    if df.empty or key_col not in df.columns:
+        for c in WX_FEATURES:
+            df[c] = np.nan
+        return df
+    from sandy import weather as _wx
+    wmap = _wx.weather_map(league, engine)
+    nan4 = (np.nan,) * 4
+    vals = [wmap.get(str(int(k)) if pd.notna(k) else "", nan4) for k in df[key_col]]
+    for i, c in enumerate(WX_FEATURES):
+        df[c] = [v[i] for v in vals]
     return df
 
 
@@ -530,6 +570,20 @@ def _row_features(row, spec, market, p, league: str | None = None,
     else:
         out["h_base_rel"], out["h_base_rel_n"] = np.nan, np.nan
         out["a_base_rel"], out["a_base_rel_n"] = np.nan, np.nan
+    # Weather covariates (only for specs with a wx_key — MLB/NFL): bulk-attached
+    # upstream when present; live rows get the cached single-row lookup (stored
+    # weather, else on-the-fly forecast for pending games; NaN on any failure).
+    if spec.get("wx_key"):
+        if all(k in row for k in WX_FEATURES):
+            for k in WX_FEATURES:
+                out[k] = _num(row.get(k))
+        elif league is not None and cfg is not None:
+            from sandy import weather as _wx
+            (out["wx_temp"], out["wx_wind"], out["wx_precip"],
+             out["wx_dome"]) = _wx.live_wx(league, row.get(spec["wx_key"]), cfg)
+        else:
+            for k in WX_FEATURES:
+                out[k] = np.nan
     for m in spec["markets"]:
         out[f"mkt_{m}"] = 1.0 if m == market else 0.0
     return out
@@ -547,6 +601,7 @@ def _frame(engine, league: str, with_ids: bool = False) -> pd.DataFrame:
             f"SELECT * FROM {spec['table']} WHERE outcome_filled_at_utc IS NOT NULL{extra}"), conn)
     df = _attach_model_err(df, spec)
     df = _attach_team_rel(df, spec)
+    df = _attach_weather(df, spec, league, engine)
     rows, ys, dates, gids, mkts, homes, aways = [], [], [], [], [], [], []
     for _, r in df.iterrows():
         rd = r.to_dict()

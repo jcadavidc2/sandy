@@ -10,8 +10,8 @@ from datetime import date, timedelta
 import pandas as pd
 from sqlalchemy import text
 
-from sandy.betmeta import (SPECS, _attach_model_err, _attach_team_rel, _correct,
-                           _row_features, load_meta)
+from sandy.betmeta import (SPECS, _attach_model_err, _attach_team_rel,
+                           _attach_weather, _correct, _row_features, load_meta)
 from sandy.config import load_config
 from sandy.db import create_engine
 from sandy.mls.recommend import RECOMMEND_MIN_ACC, RECOMMEND_MIN_N, bucket_acc
@@ -116,6 +116,7 @@ def scored_results(league: str) -> pd.DataFrame:
     # dicts alone lack these columns).
     df = _attach_model_err(df, spec)
     df = _attach_team_rel(df, spec)
+    df = _attach_weather(df, spec, league, engine)
     out, feat_rows = [], []
     for _, r in df.iterrows():
         rd = r.to_dict()
@@ -368,6 +369,9 @@ COVARIATE_LABELS = {
     "p": "Prob. del modelo", "conf": "Confianza",
     "model_err": "Error medio del modelo (últ. 8)",
     "model_abs_err": "Error abs. medio del modelo (últ. 8)",
+    # clima del partido (open-meteo; hora del primer lanzamiento / kickoff)
+    "wx_temp": "Temperatura (°C)", "wx_wind": "Viento (km/h)",
+    "wx_precip": "Lluvia (mm)", "wx_dome": "Techo cerrado",
 }
 
 
@@ -409,6 +413,12 @@ def game_covariates(league: str, day: date) -> pd.DataFrame:
                     SELECT * FROM {spec['table']}
                     WHERE match_date BETWEEN :a AND :b{extra} AND is_backtest
                     ORDER BY match_date, id"""), params).fetchall()
+    # weather covariates (MLB/NFL when the spec has a wx_key) — same stored
+    # rows the meta sees (odds.game_weather), labeled in Spanish
+    wx_map: dict = {}
+    if spec.get("wx_key") and rows:
+        from sandy import weather as _wx
+        wx_map = _wx.weather_map(league, engine)
     out = []
     for r in rows:
         rd = dict(r._mapping)
@@ -426,6 +436,12 @@ def game_covariates(league: str, day: date) -> pd.DataFrame:
         for k in spec["form_keys"]:
             row_out[covariate_label(f"h_{k}")] = home.get(k)
             row_out[covariate_label(f"a_{k}")] = away.get(k)
+        if spec.get("wx_key"):
+            wx = wx_map.get(str(rd.get(spec["wx_key"])))
+            for i, k in enumerate(("wx_temp", "wx_wind", "wx_precip", "wx_dome")):
+                v = wx[i] if wx else None
+                row_out[covariate_label(k)] = (None if v is None or v != v
+                                               else round(float(v), 1))
         out.append(row_out)
     return pd.DataFrame(out)
 

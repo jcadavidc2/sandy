@@ -13,6 +13,17 @@ tg() {
         -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=$1" > /dev/null 2>&1 || true
 }
 
+# 🌤️ Weather covariates (open-meteo, keyless — sandy/weather.py): BEFORE the
+# value/portfolio steps so today's MLB/NFL candidates score with a stored
+# forecast row instead of on-the-fly fetches. Also refreshes yesterday's games
+# from the forecast API (measured past_days values, so reconciled training rows
+# get actuals) and flips week-old 'forecast' rows to archive 'hist'. NON-FATAL:
+# on failure the metas simply score with wx=NaN (trees route to default).
+echo "[$(date -Iseconds)] weather daily (forecast hoy + actuals ayer + hist top-up)..."
+if ! nice -n 10 .venv/bin/python -m sandy.weather daily; then
+    echo "[$(date -Iseconds)] ⚠️ weather daily FAILED (non-fatal — picks salen con clima NaN)"
+fi
+
 echo "[$(date -Iseconds)] odds daily (fetch frugal + match + value log + reconcile)..."
 if ! nice -n 10 .venv/bin/python -m sandy.odds daily; then
     echo "[$(date -Iseconds)] odds daily FAILED"
