@@ -107,13 +107,17 @@ def ensure_tables(engine) -> None:
 
 # --------------------------------------------------------------- candidates --
 def best_per_game(cands: list[dict]) -> list[dict]:
-    """MAX ONE candidate PER GAME: keep the pick with the highest expected
-    value under OUR raw probability (ev = prob·cuota − 1). Pure + unit-tested.
-    Result is sorted by descending ev (the parlay pool takes the head)."""
+    """MAX ONE candidate PER GAME — selected EXACTLY like the 🏁 Picks del Día
+    finals: the pick with the highest 🤖 meta score wins the game (tie-break by
+    raw EV). So B's pool is literally the Picks del Día list, restricted to the
+    picks that have a matched cuota. Pure + unit-tested. Result sorted by
+    descending ev (the parlay pool takes the head)."""
+    def _key(c):
+        return (c.get("meta") if c.get("meta") is not None else -1.0, c["ev"])
     best: dict[tuple, dict] = {}
     for c in cands:
         g = c["game"]
-        if g not in best or c["ev"] > best[g]["ev"]:
+        if g not in best or _key(c) > _key(best[g]):
             best[g] = c
     return sorted(best.values(), key=lambda c: -c["ev"])
 
@@ -171,6 +175,7 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
                     "pick": _pick_label(league, market, side, line, home, away),
                     "cuota": round(cuota, 2),
                     "prob": round(prob, 4),        # raw calibrated side prob
+                    "meta": None if mp is None else round(float(mp), 4),  # 🤖 (selection key)
                     "p_bet": round(prob, 4),       # == prob: NO shrink (B's thesis)
                     "mercado_pct": None if novig is None else round(float(novig), 4),
                     "edge": None if novig is None else round(prob - float(novig), 4),

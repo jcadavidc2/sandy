@@ -21,8 +21,8 @@ from sandy.odds import DISPLAY_TZ
 st.set_page_config(page_title="Sandy · Portafolio Picks", page_icon="🎯", layout="wide")
 st.title("🎯 Portafolio B — Picks del Día (dinero de papel)")
 st.caption("El experimento hermano del 🎰 Portafolio: una SEGUNDA banca de papel de $100.000 "
-           "que apuesta TODOS los días a los picks ✅ del día (uno por partido, el de mayor "
-           "valor esperado), usando nuestra probabilidad cruda — sin recorte prudente y "
+           "que apuesta TODOS los días EXACTAMENTE a los 🏁 Picks del Día que tengan cuota "
+           "(el mejor 🤖 por partido), usando nuestra probabilidad cruda — sin recorte prudente y "
            "aunque el mercado no nos dé ventaja. Mismo optimizador (Kelly fraccional Monte "
            "Carlo, pasos de $500, tope 30% por partido), otra tesis. Las dos curvas, lado a "
            "lado, son la prueba A/B.")
@@ -102,7 +102,7 @@ if not persisted_today.empty:
     o3.metric("Apostado hoy (oficial)", f"${persisted_today['stake'].sum():,.0f}")
     o4.metric("Tiquetes", f"{len(persisted_today)}")
     ICON_O = {"won": "✓ ganada", "lost": "✗ perdida", "open": "⏳ abierta", "void": "↩ anulada"}
-    st.dataframe(pd.DataFrame({
+    _tbl = pd.DataFrame({
         "Apuesta": persisted_today["ticket_id"].map(lambda i: f"Apuesta {i}"),
         "Tipo": persisted_today["tipo"],
         "Tiquete": persisted_today["tiquete"],
@@ -110,7 +110,13 @@ if not persisted_today.empty:
         "Apostado": persisted_today["stake"],
         "Ganaría": persisted_today["stake"] * persisted_today["ticket_cuota"],
         "Estado": persisted_today["status"].map(ICON_O),
-    }), use_container_width=True, hide_index=True,
+    })
+    _tbl = pd.concat([_tbl, pd.DataFrame([{
+        "Apuesta": "TOTAL", "Tipo": "", "Tiquete": f"{len(_tbl)} tiquetes",
+        "Cuota": None, "Apostado": _tbl["Apostado"].sum(),
+        "Ganaría": _tbl["Ganaría"].sum(), "Estado": "",
+    }])], ignore_index=True)
+    st.dataframe(_tbl, use_container_width=True, hide_index=True,
         column_config={
             "Tipo": st.column_config.TextColumn(help="Individual = un pick. Combinada xN = N "
                                                 "partidos distintos; deben acertar TODOS."),

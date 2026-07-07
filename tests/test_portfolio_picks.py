@@ -41,21 +41,31 @@ def test_void_and_pending_behave_like_a():
 
 
 # ----------------------------------------------------- one pick per game (B) --
-def _cand(i, cuota, prob, game=None):
+def _cand(i, cuota, prob, game=None, meta=None):
     prob = float(prob)
     return {"game": game or ("mlb", f"H{i}", f"A{i}"), "cuota": cuota,
             "prob": prob, "p_bet": prob,          # RAW prob — no shrink (B's thesis)
+            "meta": meta,                          # 🤖 — the per-game selection key
             "ev": prob * cuota - 1.0}
 
 
-def test_best_per_game_keeps_highest_raw_ev_pick():
+def test_best_per_game_mirrors_picks_del_dia_highest_meta():
     g = ("mlb", "NYY", "BOS")
-    low = _cand(0, cuota=1.60, prob=0.60, game=g)    # ev = -0.04
-    high = _cand(1, cuota=2.10, prob=0.55, game=g)   # ev = +0.155
-    other = _cand(2, cuota=1.90, prob=0.55)          # ev = +0.045, distinct game
-    out = best_per_game([low, high, other])
-    assert len(out) == 2                             # one per game
-    assert out[0] is high                            # highest raw EV wins the game
+    # SAME game: the pick with the higher 🤖 wins even with a lower raw EV —
+    # exactly the 🏁 Picks del Día finals rule.
+    hi_meta = _cand(0, cuota=1.60, prob=0.60, game=g, meta=0.91)   # ev = -0.04
+    hi_ev = _cand(1, cuota=2.10, prob=0.55, game=g, meta=0.82)     # ev = +0.155
+    other = _cand(2, cuota=1.90, prob=0.55, meta=0.85)             # distinct game
+    out = best_per_game([hi_meta, hi_ev, other])
+    assert len(out) == 2                              # one per game
+    assert any(c is hi_meta for c in out)             # highest 🤖 wins the game
+    assert all(c is not hi_ev for c in out)
+    # ties/missing meta fall back to EV
+    g2 = ("nba", "LAL", "BOS")
+    a = _cand(3, cuota=2.0, prob=0.60, game=g2, meta=None)
+    b = _cand(4, cuota=1.5, prob=0.60, game=g2, meta=None)
+    out2 = best_per_game([a, b])
+    assert len(out2) == 1 and out2[0] is a            # EV tie-break when no 🤖
     assert [c["ev"] for c in out] == sorted((c["ev"] for c in out), reverse=True)
 
 
