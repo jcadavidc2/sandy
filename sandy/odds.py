@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.the-odds-api.com/v4"
 REGIONS = "eu"
-MARKETS = "totals,h2h"
+MARKETS = "totals,h2h,alternate_totals"  # alternates fill cuotas for our non-main lines (+1 credit/league-day)
 MIN_EDGE = 0.03  # 3 percentage points
 
 # All verticals use the America/Los_Angeles calendar date of kickoff as
@@ -268,8 +268,10 @@ def _event_rows(league: str, sport_key: str, event: dict) -> list[dict]:
         book = bm.get("key")
         for mk in bm.get("markets") or []:
             market = mk.get("key")
-            if market not in ("h2h", "totals"):
+            if market not in ("h2h", "totals", "alternate_totals"):
                 continue
+            if market == "alternate_totals":
+                market = "totals"  # same rows/matching as main totals — just more lines
             groups: dict[float | None, list[dict]] = {}
             for oc in mk.get("outcomes") or []:
                 pt = oc.get("point")
@@ -331,7 +333,14 @@ def _event_rows(league: str, sport_key: str, event: dict) -> list[dict]:
                                      "price": i_by_side["away"][1],
                                      "implied": i_by_side["away"][0],
                                      "implied_novig": i_by_side["away"][0] / total})
-    return rows
+    # De-dup (book, market, point, side): the main line usually repeats inside
+    # alternate_totals — keep the best (max) price for the bettor.
+    dedup: dict[tuple, dict] = {}
+    for r in rows:
+        k = (r["book"], r["market"], r["point"], r["side"])
+        if k not in dedup or r["price"] > dedup[k]["price"]:
+            dedup[k] = r
+    return list(dedup.values())
 
 
 def fetch_league(league: str, sport_key: str, engine) -> dict:
