@@ -55,29 +55,29 @@ day = datetime.now(DISPLAY_TZ).date()
 
 
 @st.cache_data(ttl=300)
-def _bank() -> float:
+def _bank_B(_page: str = "B") -> float:
     return P.available_bank()
 
 
 @st.cache_data(ttl=300)
-def _bank_before(d) -> float:
+def _bank_before_B(d, _page: str = "B") -> float:
     # bank BEFORE the day's own stakes — default controls reproduce the
     # persisted portfolio exactly (deterministic seed)
     return P.available_bank(before=d)
 
 
 @st.cache_data(ttl=300)
-def _whatif(d, budget: float, risk: str) -> dict:
+def _whatif_B(d, budget: float, risk: str, _page: str = "B") -> dict:
     return P.build_portfolio(day=d, budget=budget, risk=risk, persist=False)
 
 
 @st.cache_data(ttl=300)
-def _tickets_hist() -> pd.DataFrame:
+def _tickets_hist_B(_page: str = "B") -> pd.DataFrame:
     return P.tickets_frame()
 
 
 @st.cache_data(ttl=300)
-def _bankroll() -> pd.DataFrame:
+def _bankroll_B(_page: str = "B") -> pd.DataFrame:
     return P.bankroll_frame()
 
 
@@ -86,9 +86,9 @@ def _bankroll_a() -> pd.DataFrame:
     return PA.bankroll_frame()
 
 
-bank = _bank()
-bank_basis = _bank_before(day)
-hist = _tickets_hist()
+bank = _bank_B()
+bank_basis = _bank_before_B(day)
+hist = _tickets_hist_B()
 persisted_today = hist[hist["date"] == day] if not hist.empty else pd.DataFrame()
 
 # ----------------------------------------------------------- OFFICIAL first
@@ -130,7 +130,7 @@ if not persisted_today.empty:
     st.caption("Registro REAL del día del experimento B (congelado antes de los partidos, "
                "liquidado a la mañana siguiente).")
 else:
-    _bk0 = _bankroll()
+    _bk0 = _bankroll_B()
     day_decided = (not _bk0.empty) and (day in set(_bk0["date"]))
     if day_decided:
         o3.metric("Apostado hoy (oficial)", "$0")
@@ -160,7 +160,7 @@ risk = c2.radio("Riesgo", list(PA.RISKS), index=2, horizontal=True,
 c3.metric("Presupuesto oficial", f"${PA.default_budget(bank_basis):,.0f}",
           help="El techo real del día: 30% de la banca B.")
 
-res = _whatif(day, float(budget), risk)
+res = _whatif_B(day, float(budget), risk)
 
 if not res.get("tickets"):
     st.info("🙅 $0 apostado en esta simulación — no hay picks ✅ con cuota hoy (o el "
@@ -228,7 +228,7 @@ else:
 st.divider()
 st.subheader("📒 Historial — B contra A, la curva que decide el experimento")
 
-bk = _bankroll()
+bk = _bankroll_B()
 if bk.empty:
     st.info("Aún no hay días registrados en la banca B. El primer portafolio se guarda en "
             "el próximo run diario (8:15 AM Bogotá).")
