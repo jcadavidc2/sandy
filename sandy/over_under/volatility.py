@@ -34,6 +34,25 @@ logger = get_logger("over_under.volatility")
 # Fallback σ when the volatility model is not available (data-driven average)
 DEFAULT_SIGMA: float = 3.3
 
+# Game-time weather covariates (odds.game_weather via sandy/weather.py), the
+# optional wx extension of the σ feature set. Order matters (model input).
+# Missing weather -> NaN (LightGBM routes missing to the default branch); the
+# ten base features keep their historical 0.0 default.
+#
+# DORMANT — judge gate 2026-07-07 said NO to weather in the MLB BASE models.
+# In-memory walk-forward over the 7,794 backtest games (in-harness baseline
+# reproduced the stored rows to 1e-6), pooled 7-line log-loss on the untouched
+# final 25%:  base 0.64181 · wx-in-sigma 0.64183 · wx-total-adjust 0.64360 ·
+# both 0.64366. Neither candidate improved -> production keeps wx=False and no
+# total adjustment (weather stays at the MLB META level only, where it passed:
+# AUC .6058->.6119). Machinery kept for future re-gating as data accumulates;
+# do NOT flip defaults/call sites without a fresh judge pass.
+WX_SIGMA_FEATURES: list[str] = ["wx_temp", "wx_wind", "wx_precip", "wx_dome"]
+
+# Minimum open-air games with weather for the runs-total adjustment fit;
+# below this the adjustment is disabled (None -> 0.0 everywhere).
+WX_ADJ_MIN_OPEN_AIR = 150
+
 # LightGBM hyperparameters for volatility (regression, same as runs model)
 _LGB_VOLATILITY_PARAMS = {
     "objective": "regression",
@@ -50,12 +69,31 @@ _LGB_VOLATILITY_PARAMS = {
 }
 
 
+def attach_wx(df: pd.DataFrame, engine, wmap: dict | None = None) -> pd.DataFrame:
+    """Add the WX_SIGMA_FEATURES columns to a per-game frame by joining
+    odds.game_weather on game_pk (NaN where no weather is stored — e.g. the
+    2022 season, which predates the weather backfill). *wmap* lets callers
+    reuse one weather_map() across many blocks (walk-forward backtests)."""
+    from sandy.weather import weather_map
+
+    if wmap is None:
+        wmap = weather_map("mlb", engine)
+    df = df.copy()
+    nan4 = (float("nan"),) * 4
+    vals = [wmap.get(str(int(pk)), nan4) for pk in df["game_pk"]]
+    for i, name in enumerate(WX_SIGMA_FEATURES):
+        df[name] = [v[i] for v in vals]
+    return df
+
+
 def train_volatility_model(
     config: Config,
     *,
     seed: int = 42,
     training_window: tuple[date, date] | None = None,
     runs_artifact: ModelArtifact | None = None,
+    wx: bool = False,
+    frame: pd.DataFrame | None = None,
 ) -> ModelArtifact:
     """Train a model that predicts |actual_total - predicted_total| per game.
 
@@ -63,15 +101,31 @@ def train_volatility_model(
     1. Load all games from derived.game_features joined with raw.games (actual scores)
     2. For each game, run the runs model to get predicted_home + predicted_away
     3. Compute residual = abs(actual_total - predicted_total)
-    4. Train LightGBM regression: 10 game features → residual
+    4. Train LightGBM regression: game features (+ weather when wx=True) → residual
     5. Return ModelArtifact with target_name="volatility"
+
+    wx=True appends WX_SIGMA_FEATURES (temp/wind/precip/dome from
+    odds.game_weather); the artifact's feature_names record the choice, and
+    predict_sigma builds its input from artifact.feature_names — so old and
+    new artifacts both score correctly. *frame* lets walk-forward callers
+    pass a pre-loaded _load_volatility_frame result (avoids reloading it for
+    each model variant); production callers leave it None.
     """
     from sandy.db import create_engine, get_connection
 
     engine = create_engine(config)
 
-    with get_connection(engine) as conn:
-        df = _load_volatility_frame(conn, config, training_window, runs_artifact=runs_artifact)
+    if frame is not None:
+        df = frame
+    else:
+        with get_connection(engine) as conn:
+            df = _load_volatility_frame(conn, config, training_window, runs_artifact=runs_artifact)
+
+    feature_names = list(GAME_FEATURE_NAMES)
+    if wx:
+        if not all(c in df.columns for c in WX_SIGMA_FEATURES):
+            df = attach_wx(df, engine)
+        feature_names += WX_SIGMA_FEATURES
 
     if len(df) < 100:
         raise ValueError(
@@ -97,14 +151,14 @@ def train_volatility_model(
     )
 
     # Build LightGBM datasets
-    X_train = train_df[GAME_FEATURE_NAMES].values.astype(np.float32)
+    X_train = train_df[feature_names].values.astype(np.float32)
     y_train = train_df["residual"].values.astype(np.float32)
-    X_val = val_df[GAME_FEATURE_NAMES].values.astype(np.float32)
+    X_val = val_df[feature_names].values.astype(np.float32)
     y_val = val_df["residual"].values.astype(np.float32)
 
-    lgb_train = lgb.Dataset(X_train, label=y_train, feature_name=GAME_FEATURE_NAMES)
+    lgb_train = lgb.Dataset(X_train, label=y_train, feature_name=feature_names)
     lgb_val = lgb.Dataset(
-        X_val, label=y_val, feature_name=GAME_FEATURE_NAMES, reference=lgb_train
+        X_val, label=y_val, feature_name=feature_names, reference=lgb_train
     )
 
     # Fit
@@ -143,12 +197,25 @@ def train_volatility_model(
 
     return ModelArtifact(
         model=booster,
-        feature_names=GAME_FEATURE_NAMES,
+        feature_names=feature_names,
         feature_schema_version=GAME_FEATURE_SCHEMA_VERSION,
         training_window_start=df["game_date"].min(),
         training_window_end=df["game_date"].max(),
         created_at=datetime.now(timezone.utc),
         target_name="volatility",
+    )
+
+
+def sigma_feature_row(features: dict[str, float], feature_names: list[str]) -> np.ndarray:
+    """The σ model's input row, driven by the ARTIFACT's feature list so both
+    the 10-feature and the wx-extended artifacts score correctly. Defaults:
+    base game features -> 0.0 (historical behavior), wx features -> NaN
+    (LightGBM missing-value branch — a game without weather behaves like the
+    weatherless model saw it)."""
+    return np.array(
+        [[features.get(name, float("nan") if name in WX_SIGMA_FEATURES else 0.0)
+          for name in feature_names]],
+        dtype=np.float32,
     )
 
 
@@ -169,11 +236,8 @@ def predict_sigma(features: dict[str, float], config: Config) -> float:
         )
         return DEFAULT_SIGMA
 
-    # Build feature array in the correct order
-    feature_array = np.array(
-        [[features.get(name, 0.0) for name in GAME_FEATURE_NAMES]],
-        dtype=np.float32,
-    )
+    # Build feature array in the artifact's own feature order
+    feature_array = sigma_feature_row(features, list(artifact.feature_names))
 
     prediction = artifact.model.predict(feature_array)[0]
 
@@ -181,6 +245,82 @@ def predict_sigma(features: dict[str, float], config: Config) -> float:
     sigma = float(max(1.0, min(8.0, prediction)))
 
     return sigma
+
+
+# ---------------------------------------------------------------------------
+# Weather adjustment of the expected TOTAL (open-air runs physics)
+# ---------------------------------------------------------------------------
+
+
+def fit_wx_runs_adjustment(
+    config: Config,
+    *,
+    training_window: tuple[date, date] | None = None,
+    runs_artifact: ModelArtifact | None = None,
+    frame: pd.DataFrame | None = None,
+    wmap: dict | None = None,
+) -> dict | None:
+    """Fit total_adj = b1·wind_kmh + b2·(temp_c-20) + b3·precip_mm on the runs
+    model's SIGNED total residuals (actual − predicted) over OPEN-AIR games
+    (wx_dome < 1; retractables half-weighted by (1-wx_dome)) in the training
+    window. No intercept — at (wind 0, 20°C, dry) the adjustment is zero, and
+    dome games (wx_dome=1) are untouched by construction at apply time.
+
+    Returns {"coefs": [b_wind, b_temp, b_precip], "n_open": int} or None when
+    fewer than WX_ADJ_MIN_OPEN_AIR usable games / weather unavailable — the
+    caller then applies no adjustment (today's exact behavior)."""
+    from sandy.db import create_engine, get_connection
+
+    try:
+        engine = create_engine(config)
+        if frame is None:
+            with get_connection(engine) as conn:
+                frame = _load_volatility_frame(
+                    conn, config, training_window, runs_artifact=runs_artifact
+                )
+        if frame.empty:
+            return None
+        if not all(c in frame.columns for c in WX_SIGMA_FEATURES):
+            frame = attach_wx(frame, engine, wmap=wmap)
+        resid = frame["actual_total"].to_numpy(dtype=float) - \
+            frame["predicted_total"].to_numpy(dtype=float)
+        dome = frame["wx_dome"].to_numpy(dtype=float)
+        X = np.column_stack([
+            frame["wx_wind"].to_numpy(dtype=float),
+            frame["wx_temp"].to_numpy(dtype=float) - 20.0,
+            frame["wx_precip"].to_numpy(dtype=float),
+        ])
+        ok = np.isfinite(X).all(axis=1) & np.isfinite(dome) & (dome < 1.0) & np.isfinite(resid)
+        n_open = int(ok.sum())
+        if n_open < WX_ADJ_MIN_OPEN_AIR:
+            logger.info(
+                f"wx runs adjustment: only {n_open} open-air games — disabled",
+                extra={"component": "over_under.volatility"},
+            )
+            return None
+        sw = np.sqrt(1.0 - dome[ok])
+        b, *_ = np.linalg.lstsq(X[ok] * sw[:, None], resid[ok] * sw, rcond=None)
+        return {"coefs": [float(v) for v in b], "n_open": n_open}
+    except Exception as exc:  # noqa: BLE001 — weather must never break training
+        logger.warning(
+            f"wx runs adjustment fit failed ({exc}) — disabled",
+            extra={"component": "over_under.volatility"},
+        )
+        return None
+
+
+def wx_total_adjustment(adj: dict | None, wx) -> float:
+    """Apply a fit_wx_runs_adjustment result to one game.
+
+    wx = (wx_temp, wx_wind, wx_precip, wx_dome) — the weather.wx_tuple /
+    live_wx order. NaN-safe: no fit, no weather, or any NaN -> 0.0."""
+    if not adj or not adj.get("coefs") or wx is None:
+        return 0.0
+    t, wnd, pr, dome = (float(v) for v in wx)
+    if not np.all(np.isfinite([t, wnd, pr, dome])):
+        return 0.0
+    b1, b2, b3 = adj["coefs"]
+    return float((1.0 - dome) * (b1 * wnd + b2 * (t - 20.0) + b3 * pr))
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +456,11 @@ def _load_volatility_frame(
 
 __all__ = [
     "DEFAULT_SIGMA",
+    "WX_SIGMA_FEATURES",
+    "attach_wx",
+    "fit_wx_runs_adjustment",
     "predict_sigma",
+    "sigma_feature_row",
     "train_volatility_model",
+    "wx_total_adjustment",
 ]

@@ -140,12 +140,15 @@ SPECS = {
         "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win"],
         "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
         "err_expected": ["exp_total"], "err_actual": "actual_total",
-        # Weather covariates DORMANT for the NFL: the 2026-07-07 gated retrain
-        # with wx_* fell on test AUC (0.6163 -> 0.6103; acc@thr was fine), so
-        # the artifact was reverted and the frame stays weatherless here — the
-        # nightly `sandy nfl meta` retrain is ungated and must not resurrect
-        # them. odds.game_weather keeps accumulating NFL rows (backfilled
-        # 2022-09+ and refreshed daily by odds_daily.sh); to re-gate later add:
+        # Weather covariates DORMANT for the NFL meta: the 2026-07-07 gated
+        # retrain with wx_* fell on test AUC (0.6163 -> 0.6103), and the
+        # SECOND try (2026-07-07, after weather moved into the BASE model's
+        # expected-total adjustment — see nfl/loop.py _wx_adjust) also lost:
+        # AUC 0.6002 -> 0.6022 but acc@thr collapsed 0.8241 -> 0.7748 (>1pp
+        # rule). Weather now lives in the NFL BASE model only; the nightly
+        # `sandy nfl meta` retrain is ungated and must not resurrect wx here.
+        # odds.game_weather keeps accumulating NFL rows (backfilled 2022-09+
+        # and refreshed daily by odds_daily.sh); to re-gate later add:
         # "wx_key": "event_id",
     },
     "nhl": {

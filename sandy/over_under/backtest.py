@@ -152,13 +152,14 @@ def _predict_runs(artifact: ModelArtifact, values: dict) -> float:
 
 
 def _predict_sigma_from_artifact(artifact: ModelArtifact | None, values: dict) -> float:
-    """Matchup σ from the block's volatility artifact (mirrors predict_sigma)."""
+    """Matchup σ from the block's volatility artifact (mirrors predict_sigma).
+    Input row built from the ARTIFACT's feature list (sigma_feature_row), so
+    wx-extended σ models score correctly; 10-feature artifacts are bit-identical
+    to the historical path."""
     if artifact is None:
         return DEFAULT_SIGMA
-    x = np.array(
-        [[float(values.get(name, 0.0)) for name in GAME_FEATURE_NAMES]],
-        dtype=np.float32,
-    )
+    from sandy.over_under.volatility import sigma_feature_row
+    x = sigma_feature_row(values, list(artifact.feature_names))
     return float(max(1.0, min(8.0, artifact.model.predict(x)[0])))
 
 

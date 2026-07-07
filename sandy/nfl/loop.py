@@ -47,7 +47,13 @@ HALF_LIFE_DAYS = 200.0   # weekly cadence: ~one season back still carries ~0.28 
 # Defaults here; models/hyper_nfl.json overrides (walk-forward tuned).
 # sigma_coefs = [a, b, c]: per-game sigma^2 ≈ a + b·exp_total + c·(tot_var_10 sum)
 # used for P(over) only; None keeps the global sigma.
-HYPER_DEFAULTS = {"half_life_days": HALF_LIFE_DAYS, "ridge": 0.0, "sigma_coefs": None}
+# wx_totals: weather adjustment of the expected TOTAL (see fit_model /
+# _wx_adjust) — walk-forward judge gate 2026-07-07: 0.63160 -> 0.62494.
+HYPER_DEFAULTS = {"half_life_days": HALF_LIFE_DAYS, "ridge": 0.0, "sigma_coefs": None,
+                  "wx_totals": True}
+# Weather->total adjustment needs at least this many open-air training games
+# with stored weather, else coefficients stay 0 (= no adjustment, old behavior).
+WX_MIN_OPEN_AIR = 150
 
 
 def hyper() -> dict:
@@ -162,15 +168,64 @@ def backfill(config: Config | None = None, *, start: date, end: date | None = No
 
 # ------------------------------- model -------------------------------------
 class NflModel:
-    def __init__(self, mu, hfa, off, dfn, sigma_total, sigma_margin, as_of, n):
+    def __init__(self, mu, hfa, off, dfn, sigma_total, sigma_margin, as_of, n,
+                 wx_coefs=None):
         self.mu, self.hfa, self.off, self.dfn = mu, hfa, off, dfn
         self.sigma_total, self.sigma_margin = sigma_total, sigma_margin
         self.as_of, self.n = as_of, n
+        # [b_wind, b_temp, b_precip] for the open-air total adjustment
+        # (None/missing on old pickles -> _wx_adjust returns 0.0).
+        self.wx_coefs = wx_coefs
 
     def expected(self, home_id: int, away_id: int) -> tuple[float, float]:
         eh = self.mu + self.off.get(home_id, 0.0) - self.dfn.get(away_id, 0.0) + self.hfa
         ea = self.mu + self.off.get(away_id, 0.0) - self.dfn.get(home_id, 0.0)
         return eh, ea
+
+
+def _wx_adjust(model: "NflModel", wx) -> float:
+    """Weather adjustment to the expected TOTAL, open-air games only.
+
+    total_adj = (1 - wx_dome) * (b1·wind_kmh + b2·(temp_c - 20) + b3·precip_mm)
+    with wx = (temp_c, wind_kmh, precip_mm, wx_dome) — the weather.wx_tuple /
+    live_wx order. Fixed roofs (wx_dome=1) get 0; retractables (0.5) get half
+    weight. NaN-safe: missing weather (None / any NaN) -> 0.0, i.e. exactly the
+    weatherless behavior. Coefficients are fit per refit in fit_model on
+    strictly-prior data (walk-forward judge gated: 0.63160 -> 0.62494)."""
+    coefs = getattr(model, "wx_coefs", None)
+    if not coefs or wx is None:
+        return 0.0
+    t, wnd, pr, dome = (float(v) for v in wx)
+    if not np.all(np.isfinite([t, wnd, pr, dome])):
+        return 0.0
+    b1, b2, b3 = coefs
+    return float((1.0 - dome) * (b1 * wnd + b2 * (t - 20.0) + b3 * pr))
+
+
+def _fit_wx_coefs(engine: Engine, df: pd.DataFrame, w: np.ndarray,
+                  tot_res: np.ndarray) -> list[float] | None:
+    """Weighted no-intercept OLS of the WLS total residuals on
+    [wind_kmh, temp_c-20, precip_mm] over OPEN-AIR training games (weight =
+    the fit's time-decay × (1-dome)). Returns [b_wind, b_temp, b_precip], or
+    None when <WX_MIN_OPEN_AIR usable games / weather unavailable — in which
+    case predictions are exactly the weatherless ones."""
+    try:
+        from sandy import weather as _wx
+        wmap = _wx.weather_map("nfl", engine)
+        wv = np.array([wmap.get(str(int(e)), (float("nan"),) * 4)
+                       for e in df["event_id"]])
+        dome = wv[:, 3]
+        X = np.column_stack([wv[:, 1], wv[:, 0] - 20.0, wv[:, 2]])
+        ok = np.isfinite(X).all(axis=1) & np.isfinite(dome) & (dome < 1.0)
+        if int(ok.sum()) < WX_MIN_OPEN_AIR:
+            logger.info("nfl wx fit: only %s open-air games — no adjustment", int(ok.sum()))
+            return None
+        sw = np.sqrt(w[ok] * (1.0 - dome[ok]))
+        b, *_ = np.linalg.lstsq(X[ok] * sw[:, None], tot_res[ok] * sw, rcond=None)
+        return [float(v) for v in b]
+    except Exception:  # noqa: BLE001 — weather must never break the model fit
+        logger.exception("nfl wx coefficient fit failed — weather adj disabled")
+        return None
 
 
 def _load_games(engine: Engine, as_of: date | None = None) -> pd.DataFrame:
@@ -181,7 +236,7 @@ def _load_games(engine: Engine, as_of: date | None = None) -> pd.DataFrame:
         params["as_of"] = as_of
     with engine.begin() as conn:
         return pd.read_sql(text(f"""
-            SELECT match_date, home_team_id, away_team_id, home_points, away_points
+            SELECT event_id, match_date, home_team_id, away_team_id, home_points, away_points
             FROM nfl.games WHERE {where} ORDER BY match_date
         """), conn, params=params)
 
@@ -227,8 +282,12 @@ def fit_model(engine: Engine, as_of: date | None = None, *,
     mar_res = (df["home_points"] - df["away_points"]).to_numpy() - (eh - ea)
     sigma_total = float(np.sqrt(np.average(tot_res ** 2, weights=w)))
     sigma_margin = float(np.sqrt(np.average(mar_res ** 2, weights=w)))
-    model = NflModel(mu, hfa, off, dfn, sigma_total, sigma_margin, ref, len(df))
-    logger.info("nfl model: n=%s mu=%.1f hfa=%.2f sigma_total=%.1f", len(df), mu, hfa, sigma_total)
+    wx_coefs = _fit_wx_coefs(engine, df, w, tot_res) if hyp.get("wx_totals", True) else None
+    model = NflModel(mu, hfa, off, dfn, sigma_total, sigma_margin, ref, len(df),
+                     wx_coefs=wx_coefs)
+    logger.info("nfl model: n=%s mu=%.1f hfa=%.2f sigma_total=%.1f wx=%s",
+                len(df), mu, hfa, sigma_total,
+                [round(c, 4) for c in wx_coefs] if wx_coefs else None)
     return model
 
 
@@ -243,7 +302,8 @@ def fit_and_persist(config: Config | None = None) -> dict:
     with open(_model_path(cfg), "wb") as f:
         pickle.dump(model, f)
     return {"games": model.n, "mu": round(model.mu, 1), "hfa": round(model.hfa, 2),
-            "sigma_total": round(model.sigma_total, 1)}
+            "sigma_total": round(model.sigma_total, 1),
+            "wx_coefs": [round(c, 4) for c in model.wx_coefs] if model.wx_coefs else None}
 
 
 def team_form(engine: Engine, team_id: int, as_of: date) -> dict:
@@ -284,10 +344,16 @@ def _sigma_for_over(model, total: float, hf: dict, af: dict) -> float:
     return float(np.sqrt(min(max(s2, lo), hi)))
 
 
-def _markets(model: NflModel, engine, hid, aid, as_of, with_features=True) -> dict:
+def _markets(model: NflModel, engine, hid, aid, as_of, with_features=True, wx=None) -> dict:
+    """wx = (temp_c, wind_kmh, precip_mm, wx_dome) for THIS game (None/NaNs ok).
+    The weather adjustment shifts the expected TOTAL (split evenly over both
+    teams, so eh+ea stays consistent); the margin — and thus p_home_win — is
+    untouched (weather hits both offenses alike)."""
     feats = ({"home": team_form(engine, hid, as_of), "away": team_form(engine, aid, as_of)}
              if with_features else {})
     eh, ea = model.expected(hid, aid)
+    adj = _wx_adjust(model, wx)
+    eh, ea = eh + adj / 2.0, ea + adj / 2.0
     total = eh + ea
     margin = eh - ea
     hf, af = feats.get("home") or {}, feats.get("away") or {}
@@ -336,6 +402,7 @@ _ROWS_SQL = """
 
 
 def predict_scheduled(config: Config | None = None, *, days_ahead: int = 1) -> int:
+    from sandy.weather import live_wx
     cfg = config or load_config()
     engine = create_engine(cfg)
     with open(_model_path(cfg), "rb") as f:
@@ -346,7 +413,10 @@ def predict_scheduled(config: Config | None = None, *, days_ahead: int = 1) -> i
         rows = conn.execute(text(_ROWS_SQL.format(status="'NS'")),
                             {"a": today, "b": today + timedelta(days=days_ahead)}).fetchall()
         for eid, mdate, hid, aid, hab, aab in rows:
-            _persist(conn, eid, mdate, hid, aid, hab, aab, _markets(model, engine, hid, aid, today))
+            # stored weather row, else on-the-fly forecast; NaNs (-> adj 0) on failure
+            wx = live_wx("nfl", eid, cfg)
+            _persist(conn, eid, mdate, hid, aid, hab, aab,
+                     _markets(model, engine, hid, aid, today, wx=wx))
             n += 1
     logger.info("nfl predicted %s games", n)
     return n
@@ -445,6 +515,7 @@ def calibrate(config: Config | None = None, *, lookback_days: int | None = None)
 
 
 def run_backtest(config: Config | None = None, *, refit_days: int = 14) -> dict:
+    from sandy.weather import weather_map
     cfg = config or load_config()
     engine = create_engine(cfg)
     with engine.begin() as conn:
@@ -452,6 +523,7 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14) -> dict:
             "SELECT MIN(match_date), MAX(match_date) FROM nfl.games WHERE status='FT'")).fetchone()
     if lo is None:
         return {"predicted": 0}
+    wmap = weather_map("nfl", engine)  # event_id -> (temp, wind, precip, dome)
     block_start = lo + timedelta(days=300)  # first season strictly training-only
     predicted = 0
     while block_start <= hi:
@@ -466,7 +538,8 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14) -> dict:
                                 {"a": block_start, "b": block_end}).fetchall()
             for eid, mdate, hid, aid, hab, aab in rows:
                 _persist(conn, eid, mdate, hid, aid, hab, aab,
-                         _markets(model, engine, hid, aid, mdate), is_backtest=True)
+                         _markets(model, engine, hid, aid, mdate, wx=wmap.get(str(eid))),
+                         is_backtest=True)
                 predicted += 1
         logger.info("nfl backtest %s→%s: %s (train to date)", block_start, block_end, len(rows))
         block_start = block_end + timedelta(days=1)
