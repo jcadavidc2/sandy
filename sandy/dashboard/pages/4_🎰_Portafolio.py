@@ -26,6 +26,9 @@ st.caption("Simulación de una cuenta BetPlay con plata de papel — NADIE apues
            "pasos de $500 (mínimo BetPlay) maximizando el crecimiento de la banca "
            "(Kelly fraccional por Monte Carlo). Tope de exposición por partido: 30% del "
            "presupuesto del día.")
+st.caption("🎯 El Portafolio B (picks) vive en **🎯 Portafolio Picks** — mismas reglas de "
+           "optimización, otra tesis: apuesta los picks ✅ del día con nuestra probabilidad "
+           "cruda, incluso sin ventaja de mercado. Las dos curvas son la prueba A/B.")
 
 with st.expander("📖 Cómo leer esta página"):
     st.markdown("""

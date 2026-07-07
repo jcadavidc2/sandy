@@ -5,7 +5,9 @@
 # memory). Keeps the whole system hands-off.
 set -euo pipefail
 cd /home/ec2-user/sandy
-source "$HOME/.sandy_env"
+# set -a: robust sourcing — see odds_daily.sh (a 2026-07-05 env edit dropped
+# an `export` and silently broke the odds fetch for two days).
+set -a; source "$HOME/.sandy_env"; set +a
 export MLB_MODEL_DIR="${MLB_MODEL_DIR:-/home/ec2-user/sandy/models}"
 
 tg() {
@@ -64,6 +66,16 @@ echo "[$(date -Iseconds)] liquidando portafolio de papel 🎰 (tiquetes + bankro
 if ! nice -n 10 .venv/bin/python -m sandy.portfolio settle >> logs/odds.log 2>&1; then
     echo "[$(date -Iseconds)] portfolio settle FAILED (non-fatal)" | tee -a logs/odds.log
     tg "⚠️ La liquidación del portafolio de papel 🎰 falló — se reintenta sola mañana"
+fi
+
+# 🎯 Settle portfolio B "Picks del Día" (own tables — legs re-grade straight
+# from the prediction tables, not value_log; see sandy/portfolio_picks.py).
+# NON-FATAL and independent from the 🎰 settle above. Logs 'portfolio picks
+# settle COMPLETE' into odds.log.
+echo "[$(date -Iseconds)] liquidando portafolio B de picks 🎯 (tiquetes + bankroll)..."
+if ! nice -n 10 .venv/bin/python -m sandy.portfolio_picks settle >> logs/odds.log 2>&1; then
+    echo "[$(date -Iseconds)] portfolio picks settle FAILED (non-fatal)" | tee -a logs/odds.log
+    tg "⚠️ La liquidación del portafolio B 🎯 falló — se reintenta sola mañana"
 fi
 
 echo "[$(date -Iseconds)] restarting dashboard (fresh artifacts for the webpage)..."

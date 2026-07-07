@@ -6,7 +6,11 @@
 # usually covers the soccer/NBA/NHL slates; this run mostly adds MLB).
 set -uo pipefail
 cd /home/ec2-user/sandy
-source "$HOME/.sandy_env"
+# set -a: export EVERYTHING the env file defines. On 2026-07-05 the file was
+# edited and ODDS_API_KEY lost its `export` prefix — plain `source` then left
+# the key un-exported and the 07-06/07-07 fetches died with "ODDS_API_KEY not
+# set". set -a makes the sourcing robust to that class of edit forever.
+set -a; source "$HOME/.sandy_env"; set +a
 
 tg() {
     curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
@@ -44,3 +48,17 @@ if ! nice -n 10 .venv/bin/python -m sandy.portfolio build; then
     tg "⚠️ El portafolio de papel 🎰 falló hoy — cuotas y picks no se afectan"
 fi
 echo "[$(date -Iseconds)] portfolio daily COMPLETE"
+
+# 🎯 Portafolio B "Picks del Día": SECOND paper bank (own tables, own $100k)
+# that bets today's ✅ accuracy picks with our RAW probabilities — even
+# without market edge (always-bet floor). The A/B experiment vs the 🎰 value
+# portfolio above; see sandy/portfolio_picks.py. NON-FATAL and fully
+# separate: a failure never touches odds/value/🎰. Idempotent like A's.
+# Prints 'portfolio picks build COMPLETE' into odds.log.
+echo "[$(date -Iseconds)] portafolio B picks 🎯 (tesis: apostar nuestras creencias)..."
+.venv/bin/python -m sandy.portfolio_picks settle 2>&1 || true
+if ! nice -n 10 .venv/bin/python -m sandy.portfolio_picks build; then
+    echo "[$(date -Iseconds)] portfolio picks build FAILED (non-fatal)"
+    tg "⚠️ El portafolio B de picks 🎯 falló hoy — el 🎰 y los picks no se afectan"
+fi
+echo "[$(date -Iseconds)] portfolio picks daily COMPLETE"
