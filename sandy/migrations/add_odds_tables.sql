@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS odds.value_log (
     edge       REAL  NOT NULL,          -- prob - consensus implied_novig
     ev         REAL,                    -- prob*(cuota-1) - (1-prob)
     stake      REAL  NOT NULL DEFAULT 1.0,
-    result     TEXT  CHECK (result IN ('win', 'lose')),
+    result     TEXT  CHECK (result IN ('win', 'lose', 'void')),  -- void = postponed/moved game, stake back
     units      REAL,                    -- +(cuota-1)*stake on win, -stake on loss
     settled_at TIMESTAMPTZ
 );

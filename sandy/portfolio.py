@@ -471,6 +471,8 @@ def _leg_result(conn, leg: dict, today: date) -> str:
         return "win"
     if res == "lose":
         return "lose"
+    if res == "void":
+        return "void"  # reconcile marked the game postponed/moved — stake back
     if date.fromisoformat(leg["date"]) <= today - timedelta(days=VOID_AFTER_DAYS):
         return "void"  # never reconciled → postponed/cancelled
     return "pending"

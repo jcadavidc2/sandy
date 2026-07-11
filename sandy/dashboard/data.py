@@ -271,9 +271,25 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
         logging.getLogger(__name__).exception("odds_index failed — board served without cuotas")
         oidx = {}
     out, picks, all_ok = [], [], []
+    # Doubleheaders (two rows, same date + teams — e.g. a postponed MLB game made up the
+    # next day): market odds are keyed by (date, teams) and CANNOT tell the two games
+    # apart, so cuota/edge/EV are suppressed for those rows — never price the wrong game.
+    # The `hora` column (first pitch, Bogota) is what tells the games apart for the human.
+    from collections import Counter
+    _key = lambda rd: (rd["match_date"], (rd.get("home_team") or rd.get("home") or "").strip(),
+                       (rd.get("away_team") or rd.get("away") or "").strip())
+    dh_keys = {k for k, n in Counter(_key(dict(r._mapping)) for r in rows).items() if n > 1}
     for r in rows:
         rd = dict(r._mapping)
-        base = {"fecha": rd["match_date"], "local": rd["home_team"] if "home_team" in rd else rd.get("home"),
+        fp = rd.get("first_pitch_utc")
+        hora = None
+        if fp is not None:
+            try:
+                hora = pd.Timestamp(fp).tz_convert("America/Bogota").strftime("%I:%M %p").lstrip("0")
+            except Exception:
+                hora = None
+        base = {"fecha": rd["match_date"], "hora": hora or "—",
+                "local": rd["home_team"] if "home_team" in rd else rd.get("home"),
                 "visitante": rd["away_team"] if "away_team" in rd else rd.get("away")}
         finished = rd.get("outcome_filled_at_utc") is not None
         res_str = ""
@@ -306,7 +322,8 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
                 # chosen nightly on calib — falls back to meta floors on its own
                 nivel = nivel_for_pick(league, rd, market, p, mp, cfg)
                 pick_row = {"nivel": nivel,
-                            "fecha": rd["match_date"], "partido": f"{base['local']} vs {base['visitante']}",
+                            "fecha": rd["match_date"], "hora": base["hora"],
+                            "partido": f"{base['local']} vs {base['visitante']}",
                             "mercado": market_label(market, kind), "pick": yes if p >= 0.5 else no,
                             "prob": conf, "🤖": mp, "umbral": thr, "acierto_hist": acc_thr,
                             "resultado": res_str or "(pendiente)",
@@ -314,7 +331,7 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
                 # cuota/mercado %/edge/EV from matched TheOddsAPI odds (may be
                 # empty). edge uses `conf` = the pick's own side prob, NOT 🤖.
                 vstats = {"cuota": None, "mercado %": None, "edge": None, "EV": None}
-                if oidx:
+                if oidx and _key(rd) not in dh_keys:
                     from sandy import odds as _odds
                     mapping = _odds.market_to_api(league, market)
                     if mapping:

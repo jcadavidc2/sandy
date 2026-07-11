@@ -398,6 +398,12 @@ def _write_game_transaction(conn: Connection, parsed: ParsedGame) -> None:
                 )
                 ON CONFLICT (game_pk) DO UPDATE SET
                     status           = EXCLUDED.status,
+                    -- postponements/doubleheaders MOVE games: keep schedule fresh, or the
+                    -- dashboard shows stale dates/hours and doubleheader games can't be
+                    -- told apart (PIT-MIL 2026-07-10 -> 07-11 makeup)
+                    game_date        = EXCLUDED.game_date,
+                    first_pitch_utc  = EXCLUDED.first_pitch_utc,
+                    venue_id         = EXCLUDED.venue_id,
                     home_score       = EXCLUDED.home_score,
                     away_score       = EXCLUDED.away_score,
                     home_starter_id  = EXCLUDED.home_starter_id,

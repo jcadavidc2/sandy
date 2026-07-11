@@ -73,8 +73,9 @@ if len(played):
 # cuota/edge/EV (💰 capa de valor) — solo cuando el feed de cuotas trae algo
 extra_cols = [c for c in ("cuota", "edge", "EV")
               if c in df.columns and df[c].notna().any()]
+hora_col = ["hora"] if "hora" in df.columns else []
 st.dataframe(
-    df[["nivel", "liga", "fecha", "partido", "mercado", "pick", "prob", "🤖", "umbral",
+    df[["nivel", "liga", "fecha", *hora_col, "partido", "mercado", "pick", "prob", "🤖", "umbral",
         "acierto_hist", *extra_cols, "resultado", "acertó"]],
     use_container_width=True, hide_index=True, height=520,
     column_config={

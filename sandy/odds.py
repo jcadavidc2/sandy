@@ -658,9 +658,20 @@ def log_value_picks(day: date | None = None, cfg: Config | None = None,
                 SELECT * FROM {spec['table']}
                 WHERE match_date = :d AND outcome_filled_at_utc IS NULL AND {bt}{extra}
                 ORDER BY match_date, id"""), {"d": day}).fetchall()
+        # Doubleheaders: two games, same day + teams — the odds feed can't be split by
+        # (date, teams), so NO value candidates for those games (a wrong-game price is
+        # worse than no bet). The board shows them with their `hora` but sin cuota.
+        from collections import Counter
+        _dh = {k for k, n in Counter(
+            ((dict(x._mapping).get("home_team") or "").strip(),
+             (dict(x._mapping).get("away_team") or "").strip()) for x in rows).items() if n > 1}
         for r in rows:
             rd = dict(r._mapping)
             home, away = (rd["home_team"] or "").strip(), (rd["away_team"] or "").strip()
+            if (home, away) in _dh:
+                logger.info("skip value candidates for doubleheader %s %s vs %s (odds ambiguous)",
+                            league, home, away)
+                continue
             for market, (pcol, kind, line) in spec["markets"].items():
                 p = rd.get(pcol)
                 mapping = market_to_api(league, market)
@@ -716,6 +727,26 @@ def reconcile_value_log(cfg: Config | None = None) -> dict:
             if not spec:
                 continue
             extra = f" AND {spec['where']}" if spec.get("where") else ""
+            # Postponement/doubleheader detection BEFORE grading:
+            #  - 0 rows for (date, teams) and the date is past → the game MOVED (the mlb
+            #    view hides rows whose game left that date) → void, stake back.
+            #  - 2+ rows (doubleheader) → we can't know WHICH game this bet was priced
+            #    on → ungradeable → void. New candidates skip doubleheaders entirely.
+            n_games = conn.execute(text(f"""
+                SELECT COUNT(*) FROM {spec['table']}
+                WHERE match_date = :d AND btrim(home_team) = :h AND btrim(away_team) = :a{extra}
+            """), {"d": v.date, "h": v.home, "a": v.away}).scalar() or 0
+            if n_games > 1 or (n_games == 0 and v.date < datetime.now(DISPLAY_TZ).date()):
+                conn.execute(text("""
+                    UPDATE odds.value_log
+                    SET result = 'void', units = 0, settled_at = now()
+                    WHERE id = :id
+                """), {"id": v.id})
+                settled += 1
+                logger.info("VOID (%s) value pick id=%s %s %s vs %s %s",
+                            "doubleheader" if n_games > 1 else "postponed/moved",
+                            v.id, v.date, v.home, v.away, v.market)
+                continue
             g = conn.execute(text(f"""
                 SELECT * FROM {spec['table']}
                 WHERE match_date = :d AND btrim(home_team) = :h AND btrim(away_team) = :a

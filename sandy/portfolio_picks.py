@@ -146,11 +146,20 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
                 SELECT * FROM {spec['table']}
                 WHERE match_date = :d AND outcome_filled_at_utc IS NULL AND {bt}{extra}
                 ORDER BY match_date, id"""), {"d": day}).fetchall()
+        # Doubleheaders: two rows, same (date, teams) — odds keyed by (date, teams)
+        # can't be split per game, so those games are NOT candidates (a wrong-game
+        # price is worse than no bet). Same rule as A's log_value_picks.
+        from collections import Counter
+        _dh = {k for k, n in Counter(
+            ((dict(x._mapping).get("home_team") or "").strip(),
+             (dict(x._mapping).get("away_team") or "").strip()) for x in rows).items() if n > 1}
         for r in rows:
             rd = dict(r._mapping)
             home, away = (rd["home_team"] or "").strip(), (rd["away_team"] or "").strip()
             if (league, home, away) in _started:
                 continue  # game already kicked off — not biddable anymore
+            if (home, away) in _dh:
+                continue  # doubleheader — odds ambiguous, skip both games
             for market, (pcol, kind, line) in spec["markets"].items():
                 p = rd.get(pcol)
                 if p is None:
@@ -389,6 +398,14 @@ def _leg_result(conn, leg: dict, today: date) -> str:
     spec = SPECS.get(leg["liga"])
     if spec:
         extra = f" AND {spec['where']}" if spec.get("where") else ""
+        # Doubleheader guard: two prediction rows for the same (date, teams) means we
+        # can't know WHICH game this leg belongs to — ungradeable → void (stake back).
+        n_games = conn.execute(text(f"""
+            SELECT COUNT(*) FROM {spec['table']}
+            WHERE match_date = :d AND btrim(home_team) = :h AND btrim(away_team) = :a{extra}
+        """), {"d": leg["date"], "h": leg["home"], "a": leg["away"]}).scalar()
+        if n_games and n_games > 1:
+            return "void"
         g = conn.execute(text(f"""
             SELECT * FROM {spec['table']}
             WHERE match_date = :d AND btrim(home_team) = :h AND btrim(away_team) = :a
