@@ -150,15 +150,42 @@ def _pick_label(league: str, market: str, side: str, line, home: str, away: str)
 # --------------------------------------------------------------- candidates --
 def started_games(engine, day: date) -> set:
     """(league, home, away) of today's games whose kickoff already passed —
-    the sims/builds must never (re)offer an in-progress game."""
+    the sims/builds must never (re)offer an in-progress game.
+    Accepts an Engine or an already-open Connection (used inside _clear_day)."""
     from sqlalchemy import text as _t
-    with engine.begin() as conn:
-        rows = conn.execute(_t("""
-            SELECT DISTINCT league, COALESCE(our_home, event_home), COALESCE(our_away, event_away)
-            FROM odds.market_odds
-            WHERE commence_utc <= now() AND commence_utc::date >= :d
-        """), {"d": day}).fetchall()
+    from sqlalchemy.engine import Connection
+    sql, params = _t("""
+        SELECT DISTINCT league, COALESCE(our_home, event_home), COALESCE(our_away, event_away)
+        FROM odds.market_odds
+        WHERE commence_utc <= now() AND commence_utc::date >= :d
+    """), {"d": day}
+    if isinstance(engine, Connection):
+        rows = engine.execute(sql, params).fetchall()
+    else:
+        with engine.begin() as conn:
+            rows = conn.execute(sql, params).fetchall()
     return {(r[0], (r[1] or '').strip(), (r[2] or '').strip()) for r in rows}
+
+
+def hora_map(engine, day: date) -> dict[tuple, str]:
+    """(league, home, away) -> kickoff/first-pitch hour in Bogota ('11:05 AM') for
+    leagues whose prediction table exposes a time column (mlb: first_pitch_utc via
+    the raw.games join). Lets tickets say WHICH game of a day they mean."""
+    from sandy.betmeta import SPECS
+    out: dict[tuple, str] = {}
+    for lg, spec in SPECS.items():
+        try:
+            with engine.begin() as conn:
+                rows = conn.execute(text(f"""
+                    SELECT btrim(home_team) AS h, btrim(away_team) AS a, first_pitch_utc AS fp
+                    FROM {spec['table']}
+                    WHERE match_date = :d AND first_pitch_utc IS NOT NULL
+                """), {"d": day}).fetchall()
+        except Exception:
+            continue  # this league's table has no time column — fine
+        for r in rows:
+            out[(lg, r.h, r.a)] = r.fp.astimezone(DISPLAY_TZ).strftime("%I:%M %p").lstrip("0")
+    return out
 
 
 def candidates_for(day: date, engine) -> list[dict]:
@@ -177,6 +204,7 @@ def candidates_for(day: date, engine) -> list[dict]:
             ORDER BY id
         """), {"d": day}).fetchall()
     _started = started_games(engine, day)
+    _horas = hora_map(engine, day)
     best: dict[tuple, dict] = {}
     for r in rows:
         prob, cuota, edge = float(r.prob), float(r.cuota), float(r.edge)
@@ -194,6 +222,7 @@ def candidates_for(day: date, engine) -> list[dict]:
             "vl_id": r.id, "date": str(r.date), "game": game,
             "liga": r.league, "liga_titulo": _league_title(r.league),
             "partido": f"{r.home} vs {r.away}", "home": r.home, "away": r.away,
+            "hora": _horas.get(game),
             "market": r.market, "side": r.side,
             "line": None if r.line is None else float(r.line),
             "mercado": _market_label(r.league, r.market),
@@ -421,12 +450,25 @@ def build_portfolio(day: date | None = None, budget: float | None = None,
 
 
 def _clear_day(conn, day: date) -> None:
-    """--force rebuild: wipe the day's rows, refusing if anything settled."""
+    """--force rebuild: wipe the day's rows, refusing if anything settled OR in play.
+    A ticket whose game already kicked off is a REAL bet in flight — wiping it
+    rewrites history (learned 2026-07-11: a mid-day rebuild silently dropped the
+    morning's bets on six already-started games)."""
     settled = conn.execute(text(
         "SELECT count(*) FROM odds.portfolio_log WHERE date = :d AND status != 'open'"
     ), {"d": day}).scalar()
     if settled:
         raise RuntimeError(f"{day}: tickets already settled — refusing to rebuild")
+    rows = conn.execute(text(
+        "SELECT legs FROM odds.portfolio_log WHERE date = :d"), {"d": day}).fetchall()
+    started = started_games(conn, day)
+    for r in rows:
+        legs = r.legs if isinstance(r.legs, list) else json.loads(r.legs)
+        for l in legs:
+            if (l.get("liga"), (l.get("home") or "").strip(), (l.get("away") or "").strip()) in started:
+                raise RuntimeError(
+                    f"{day}: ticket leg {l.get('partido')} already kicked off — refusing to "
+                    "rebuild (in-flight bets are frozen; void the specific leg instead)")
     conn.execute(text("DELETE FROM odds.portfolio_log WHERE date = :d"), {"d": day})
     conn.execute(text(
         "DELETE FROM odds.bankroll WHERE date = :d AND (staked = 0 OR settled_at IS NULL)"
@@ -647,7 +689,8 @@ def tickets_frame(cfg: Config | None = None):
         return x if isinstance(x, list) else json.loads(x)
 
     df["tiquete"] = df["legs"].map(lambda x: " + ".join(
-        f"{l['liga_titulo']} {l['partido']}: {l['pick']} @{l['cuota']}" for l in _legs(x)))
+        f"{l['liga_titulo']} {l['partido']}{' · ' + l['hora'] if l.get('hora') else ''}: {l['pick']} @{l['cuota']}"
+        for l in _legs(x)))
     df["tipo"] = df["legs"].map(
         lambda x: "Individual" if len(_legs(x)) == 1 else f"Combinada x{len(_legs(x))}")
     return df.drop(columns=["legs"])
@@ -665,8 +708,9 @@ def _print_sheet(rep: dict) -> None:
         return
     for t in rep["tickets"]:
         kind = "Individual" if t["n_legs"] == 1 else f"Combinada x{t['n_legs']}"
-        legs_txt = " + ".join(f"{l['liga_titulo']} {l['partido']}: {l['pick']} @{l['cuota']}"
-                              for l in t["legs"])
+        legs_txt = " + ".join(
+            f"{l['liga_titulo']} {l['partido']}{' · ' + l['hora'] if l.get('hora') else ''}: {l['pick']} @{l['cuota']}"
+            for l in t["legs"])
         print(f"  Apuesta {t['ticket_id']}: {kind} — ${t['stake']:,.0f} en {legs_txt}")
         print(f"      cuota total {t['cuota']:.2f} · prob prudente {t['prob']:.1%} "
               f"(modelo {t['prob_modelo']:.1%}) · EV prudente ${t['ev']:+,.0f} "

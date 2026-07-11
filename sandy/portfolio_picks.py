@@ -187,10 +187,12 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
                 cuota, novig, _n = hit
                 cuota = float(cuota)
                 ev = prob * cuota - 1.0           # raw-model EV per $1 (may be < 0!)
+                fp = rd.get("first_pitch_utc")
                 out.append({
                     "date": str(day), "game": (league, home, away),
                     "liga": league, "liga_titulo": _league_title(league),
                     "partido": f"{home} vs {away}", "home": home, "away": away,
+                    "hora": fp.astimezone(DISPLAY_TZ).strftime("%I:%M %p").lstrip("0") if fp is not None else None,
                     "market": market, "side": side,
                     "line": None if pt is None else float(pt),
                     "mercado": _market_label(league, market),
@@ -378,12 +380,24 @@ def build_portfolio(day: date | None = None, budget: float | None = None,
 
 
 def _clear_day(conn, day: date) -> None:
-    """--force rebuild: wipe the day's B rows, refusing if anything settled."""
+    """--force rebuild: wipe the day's B rows, refusing if anything settled OR in play
+    (an in-flight leg is a frozen bet — same guard as portfolio A's _clear_day)."""
     settled = conn.execute(text(
         "SELECT count(*) FROM odds.portfolio_picks_log WHERE date = :d AND status != 'open'"
     ), {"d": day}).scalar()
     if settled:
         raise RuntimeError(f"{day}: picks tickets already settled — refusing to rebuild")
+    from sandy.portfolio import started_games
+    rows = conn.execute(text(
+        "SELECT legs FROM odds.portfolio_picks_log WHERE date = :d"), {"d": day}).fetchall()
+    started = started_games(conn, day)
+    for r in rows:
+        legs = r.legs if isinstance(r.legs, list) else json.loads(r.legs)
+        for l in legs:
+            if (l.get("liga"), (l.get("home") or "").strip(), (l.get("away") or "").strip()) in started:
+                raise RuntimeError(
+                    f"{day}: ticket leg {l.get('partido')} already kicked off — refusing to "
+                    "rebuild (in-flight bets are frozen; void the specific leg instead)")
     conn.execute(text("DELETE FROM odds.portfolio_picks_log WHERE date = :d"), {"d": day})
     conn.execute(text(
         "DELETE FROM odds.bankroll_picks WHERE date = :d AND (staked = 0 OR settled_at IS NULL)"
@@ -507,7 +521,8 @@ def tickets_frame(cfg: Config | None = None):
         return x if isinstance(x, list) else json.loads(x)
 
     df["tiquete"] = df["legs"].map(lambda x: " + ".join(
-        f"{l['liga_titulo']} {l['partido']}: {l['pick']} @{l['cuota']}" for l in _legs(x)))
+        f"{l['liga_titulo']} {l['partido']}{' · ' + l['hora'] if l.get('hora') else ''}: {l['pick']} @{l['cuota']}"
+        for l in _legs(x)))
     df["tipo"] = df["legs"].map(
         lambda x: "Individual" if len(_legs(x)) == 1 else f"Combinada x{len(_legs(x))}")
     return df.drop(columns=["legs"])
@@ -529,8 +544,9 @@ def _print_sheet(rep: dict) -> None:
               "en la mejor combinación (regla siempre-apostar del experimento).")
     for t in rep["tickets"]:
         kind = "Individual" if t["n_legs"] == 1 else f"Combinada x{t['n_legs']}"
-        legs_txt = " + ".join(f"{l['liga_titulo']} {l['partido']}: {l['pick']} @{l['cuota']}"
-                              for l in t["legs"])
+        legs_txt = " + ".join(
+            f"{l['liga_titulo']} {l['partido']}{' · ' + l['hora'] if l.get('hora') else ''}: {l['pick']} @{l['cuota']}"
+            for l in t["legs"])
         print(f"  Apuesta {t['ticket_id']}: {kind} — ${t['stake']:,.0f} en {legs_txt}")
         print(f"      cuota total {t['cuota']:.2f} · prob modelo {t['prob']:.1%} "
               f"· EV modelo ${t['ev']:+,.0f}")
