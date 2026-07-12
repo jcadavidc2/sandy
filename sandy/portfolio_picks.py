@@ -72,6 +72,7 @@ from sandy.portfolio import (
     DEFAULT_RISK,
     GAME_CAP_FRACTION,
     INITIAL_BANK,
+    MAX_TICKETS_PER_DAY,
     N_SIMS,
     RISKS,
     STEP,
@@ -233,9 +234,12 @@ def _forced_deploy(cands: list[dict], tickets: list[dict], forced_budget: float,
     pnl = np.zeros(n_sims)
     expo: dict[tuple, float] = {}
     spent = 0.0
+    n_open = 0
     while spent + STEP <= forced_budget + 1e-9:
         best_i, best_u = None, -np.inf
         for i, t in enumerate(tickets):
+            if stakes[i] == 0.0 and n_open >= MAX_TICKETS_PER_DAY:
+                continue  # ticket cap (same as the shared optimizer)
             if any(expo.get(g, 0.0) + STEP > cap + 1e-9 for g in t["games"]):
                 continue  # per-game exposure cap still applies
             u = float(np.log(np.maximum(V + pnl + STEP * pay[i], 1e-9)).mean())
@@ -243,6 +247,8 @@ def _forced_deploy(cands: list[dict], tickets: list[dict], forced_budget: float,
                 best_i, best_u = i, u
         if best_i is None:
             break
+        if stakes[best_i] == 0.0:
+            n_open += 1
         stakes[best_i] += STEP
         pnl += STEP * pay[best_i]
         for g in tickets[best_i]["games"]:

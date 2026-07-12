@@ -84,6 +84,10 @@ BUDGET_FRACTION = 0.30          # daily budget = 30% of available bankroll (user
 GAME_CAP_FRACTION = 0.30        # max exposure to ONE game across all tickets
 MAX_PARLAY_LEGS = 7
 MAX_PARLAY_POOL = 16            # enumerate parlays from the top-EV candidates only
+MAX_TICKETS_PER_DAY = 15        # operability cap (owner, 2026-07-12): once 15 tickets are
+                                # open, the greedy can only TOP UP existing ones — the
+                                # objective (E[log wealth]) is untouched, only the day's
+                                # weakest marginal tickets are declined. Shared by A and B.
 TOP_TICKETS = 60
 N_SIMS = 20_000
 VOID_AFTER_DAYS = 3             # unreconciled leg older than this → void (postponed)
@@ -297,10 +301,13 @@ def _optimize(cands: list[dict], tickets: list[dict], budget: float, bank: float
     pnl = np.zeros(n_sims)
     expo: dict[tuple, float] = {}
     spent = 0.0
+    n_open = 0
     cur_u = float(np.log(np.maximum(V + pnl, 1e-9)).mean())
     while spent + STEP <= budget + 1e-9:
         best_i, best_u = None, cur_u + 1e-12
         for i, t in enumerate(tickets):
+            if stakes[i] == 0.0 and n_open >= MAX_TICKETS_PER_DAY:
+                continue  # ticket cap reached: only top up already-open tickets
             if any(expo.get(g, 0.0) + STEP > cap + 1e-9 for g in t["games"]):
                 continue  # 30%-per-game exposure cap
             u = float(np.log(np.maximum(V + pnl + STEP * pay[i], 1e-9)).mean())
@@ -308,6 +315,8 @@ def _optimize(cands: list[dict], tickets: list[dict], budget: float, bank: float
                 best_i, best_u = i, u
         if best_i is None:
             break  # no $500 step improves expected log wealth
+        if stakes[best_i] == 0.0:
+            n_open += 1
         stakes[best_i] += STEP
         pnl += STEP * pay[best_i]
         for g in tickets[best_i]["games"]:
