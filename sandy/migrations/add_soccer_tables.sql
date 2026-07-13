@@ -120,3 +120,8 @@ ALTER TABLE soccer.match_predictions ADD COLUMN IF NOT EXISTS p_over_0_5        
 ALTER TABLE soccer.match_predictions ADD COLUMN IF NOT EXISTS p_over_5_5          REAL;
 ALTER TABLE soccer.match_predictions ADD COLUMN IF NOT EXISTS p_corners_over_7_5  REAL;
 ALTER TABLE soccer.match_predictions ADD COLUMN IF NOT EXISTS p_corners_over_12_5 REAL;
+
+-- Cup competitions (added 2026-07-13): per-event competition stage from ESPN's
+-- season.slug ("league-phase", "round-of-16", …) and its model-facing covariate.
+ALTER TABLE soccer.matches           ADD COLUMN IF NOT EXISTS stage        TEXT;
+ALTER TABLE soccer.match_predictions ADD COLUMN IF NOT EXISTS is_knockout  REAL;

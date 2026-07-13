@@ -135,9 +135,22 @@ def fit_all(config: Config | None = None) -> dict:
 
 
 # ------------------------------ predict ------------------------------------
+_NON_KNOCKOUT_STAGES = ("regular", "league-phase", "group")
+
+
+def _is_knockout(stage: str | None) -> float:
+    """Competition-stage covariate: 1.0 for elimination football (cup knockouts AND
+    two-legged qualifying ties), 0.0 for group/league play. Domestic leagues have
+    stage=NULL for their whole history → 0.0, so their metas are unaffected."""
+    if not stage:
+        return 0.0
+    s = stage.lower()
+    return 0.0 if any(t in s for t in _NON_KNOCKOUT_STAGES) else 1.0
+
+
 def _predict_row(engine, goals: DixonColesModel, corners: DixonColesModel, league, row,
                  as_of: date, is_backtest=False, with_features=True) -> dict:
-    eid, mdate, hid, aid, hname, aname = row
+    eid, mdate, hid, aid, hname, aname, stage = row
     feats = ({"home": team_form(engine, hid, as_of), "away": team_form(engine, aid, as_of)}
              if with_features else {})
     lam, mu = goals.expected_goals(hid, aid)
@@ -159,6 +172,7 @@ def _predict_row(engine, goals: DixonColesModel, corners: DixonColesModel, leagu
             "c75": c_over[7.5], "c85": c_over[8.5], "c95": c_over[9.5], "c105": c_over[10.5],
             "c115": c_over[11.5], "c125": c_over[12.5],
             "mlh": mk["most_likely"][0], "mla": mk["most_likely"][1],
+            "ko": _is_knockout(stage),
             "feats": json.dumps(feats) if feats else None, "bt": is_backtest,
             "now": datetime.now(timezone.utc)}
 
@@ -171,11 +185,11 @@ _UPSERT = text("""
         corner_lambda_home, corner_lambda_away,
         p_corners_over_7_5, p_corners_over_8_5, p_corners_over_9_5, p_corners_over_10_5,
         p_corners_over_11_5, p_corners_over_12_5,
-        most_likely_home, most_likely_away, features, is_backtest, predicted_at_utc)
+        most_likely_home, most_likely_away, is_knockout, features, is_backtest, predicted_at_utc)
     VALUES (:eid, :lg, :d, :hid, :aid, :hn, :an, :lh, :la, :phw, :pd, :paw, :phd,
             :o05, :o15, :o25, :o35, :o45, :o55, :clh, :cla,
             :c75, :c85, :c95, :c105, :c115, :c125,
-            :mlh, :mla, :feats, :bt, :now)
+            :mlh, :mla, :ko, :feats, :bt, :now)
     ON CONFLICT (event_id) DO UPDATE SET
         lambda_home=:lh, lambda_away=:la, p_home_win=:phw, p_draw=:pd, p_away_win=:paw,
         p_home_or_draw=:phd, p_over_0_5=:o05, p_over_1_5=:o15, p_over_2_5=:o25,
@@ -183,12 +197,12 @@ _UPSERT = text("""
         corner_lambda_home=:clh, corner_lambda_away=:cla,
         p_corners_over_7_5=:c75, p_corners_over_8_5=:c85, p_corners_over_9_5=:c95,
         p_corners_over_10_5=:c105, p_corners_over_11_5=:c115, p_corners_over_12_5=:c125,
-        most_likely_home=:mlh, most_likely_away=:mla,
+        most_likely_home=:mlh, most_likely_away=:mla, is_knockout=:ko,
         features=:feats, is_backtest=:bt, predicted_at_utc=:now
 """)
 
 _SCHED_SQL = """
-    SELECT m.event_id, m.match_date, m.home_team_id, m.away_team_id, t1.name, t2.name
+    SELECT m.event_id, m.match_date, m.home_team_id, m.away_team_id, t1.name, t2.name, m.stage
     FROM soccer.matches m
     JOIN soccer.teams t1 ON t1.team_id = m.home_team_id
     JOIN soccer.teams t2 ON t2.team_id = m.away_team_id

@@ -85,11 +85,23 @@ SPORT_KEYS = {
     "soccer_esp": "soccer_spain_la_liga",
     "soccer_mex": "soccer_mexico_ligamx",
     "worldcup": "soccer_fifa_world_cup",
+    # Cups (2026-07-13). UCL is resolved dynamically in sport_map() — TheOddsAPI
+    # splits it into a qualification key (Jul-Aug) and the main key (Sep-May).
+    # UEL qualifying (Jul-Aug) has NO key at TheOddsAPI: picks render sin cuota
+    # until the league phase. CONCACAF Champions Cup (ccc) has no key AT ALL —
+    # deliberately absent here (predictions still flow, never bettable).
+    "soccer_uel": "soccer_uefa_europa_league",
+    "soccer_lgc": "soccer_concacaf_leagues_cup",
+    "soccer_lib": "soccer_conmebol_copa_libertadores",
+    "soccer_sud": "soccer_conmebol_copa_sudamericana",
 }
+
+_UCL_KEYS = ("soccer_uefa_champs_league", "soccer_uefa_champs_league_qualification")
 
 # leagues where a ±1-day date fallback is allowed when team pair is unique
 # (kickoff-date conventions can drift a day; US leagues play series so NO).
-DATE_SLACK_LEAGUES = {"mls", "soccer_eng", "soccer_esp", "soccer_mex", "soccer_col", "worldcup"}
+DATE_SLACK_LEAGUES = {"mls", "soccer_eng", "soccer_esp", "soccer_mex", "soccer_col", "worldcup",
+                      "soccer_ucl", "soccer_uel", "soccer_ccc", "soccer_lgc", "soccer_lib", "soccer_sud"}
 
 # NHL abbrev → full name (nhl.teams only stores the city, the API uses full
 # names). Includes the 2025 Utah rename; aliases below catch the old name.
@@ -172,9 +184,25 @@ def discover_colombia_key() -> str | None:
     return None
 
 
+def _active_ucl_key() -> str:
+    """UCL lives under TWO TheOddsAPI keys: qualification (Jul-Aug) and the main
+    competition (Sep-May). Prefer whichever is active on the free /sports probe;
+    fall back to the main key so September needs no code change."""
+    try:
+        active = {s.get("key") for s in list_sports() if s.get("active")}
+        for k in _UCL_KEYS:
+            if k in active:
+                return k
+    except Exception:
+        logger.exception("sports list probe failed (UCL key resolution)")
+    return _UCL_KEYS[0]
+
+
 def sport_map() -> dict[str, str]:
-    """SPORT_KEYS plus soccer_col if the free /sports probe finds a key."""
+    """SPORT_KEYS plus dynamic keys: soccer_col if a Colombia key ever appears,
+    and the currently-active UCL key (qualification vs main competition)."""
     m = dict(SPORT_KEYS)
+    m["soccer_ucl"] = _active_ucl_key()
     col = discover_colombia_key()
     if col:
         m["soccer_col"] = col

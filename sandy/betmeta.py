@@ -110,6 +110,37 @@ SPECS = {
         }
         for lg in ("col", "mex", "esp", "eng")
     },
+    # Soccer CUP competitions (2026-07-13): same vertical + the competition-stage
+    # covariate — is_knockout (group/league phase vs elimination football) changes
+    # game character, so the cup metas see it; domestic leagues keep their exact
+    # feature contract (existing artifacts untouched).
+    **{
+        f"soccer_{lg}": {
+            "schema": "soccer", "table": "soccer.match_predictions",
+            "where": f"league = '{lg}'", "league": lg,
+            "markets": {
+                "double_chance": ("p_home_or_draw", "result", None),
+                "over_0_5": ("p_over_0_5", "goals", 0.5),
+                "over_1_5": ("p_over_1_5", "goals", 1.5),
+                "over_2_5": ("p_over_2_5", "goals", 2.5),
+                "over_3_5": ("p_over_3_5", "goals", 3.5),
+                "over_4_5": ("p_over_4_5", "goals", 4.5),
+                "over_5_5": ("p_over_5_5", "goals", 5.5),
+                "corners_over_7_5": ("p_corners_over_7_5", "corners", 7.5),
+                "corners_over_8_5": ("p_corners_over_8_5", "corners", 8.5),
+                "corners_over_9_5": ("p_corners_over_9_5", "corners", 9.5),
+                "corners_over_10_5": ("p_corners_over_10_5", "corners", 10.5),
+                "corners_over_11_5": ("p_corners_over_11_5", "corners", 11.5),
+                "corners_over_12_5": ("p_corners_over_12_5", "corners", 12.5),
+            },
+            "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away",
+                         "is_knockout"],
+            "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
+                          "form_points_5", "rest_days", "played_10"],
+            "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
+        }
+        for lg in ("ucl", "uel", "ccc", "lgc", "lib", "sud")
+    },
     "nba": {
         "schema": "nba", "table": "nba.game_predictions",
         "markets": {

@@ -40,16 +40,17 @@ def _upsert_match(conn, league: str, m) -> None:
         """), {"id": t.team_id, "name": t.name, "ab": t.abbrev, "lg": league, "logo": t.logo_url})
     conn.execute(text("""
         INSERT INTO soccer.matches (event_id, league, match_date, kickoff_utc, season, status,
-                                    home_team_id, away_team_id, home_goals, away_goals)
-        VALUES (:eid, :lg, :d, :ko, :season, :status, :h, :a, :hg, :ag)
+                                    home_team_id, away_team_id, home_goals, away_goals, stage)
+        VALUES (:eid, :lg, :d, :ko, :season, :status, :h, :a, :hg, :ag, :stage)
         ON CONFLICT (event_id) DO UPDATE SET
             status = EXCLUDED.status,
             home_goals = COALESCE(EXCLUDED.home_goals, soccer.matches.home_goals),
             away_goals = COALESCE(EXCLUDED.away_goals, soccer.matches.away_goals),
-            kickoff_utc = EXCLUDED.kickoff_utc, match_date = EXCLUDED.match_date
+            kickoff_utc = EXCLUDED.kickoff_utc, match_date = EXCLUDED.match_date,
+            stage = COALESCE(EXCLUDED.stage, soccer.matches.stage)
     """), {"eid": m.event_id, "lg": league, "d": m.match_date, "ko": m.kickoff_utc,
            "season": m.season, "status": m.status, "h": m.home.team_id, "a": m.away.team_id,
-           "hg": m.home_goals, "ag": m.away_goals})
+           "hg": m.home_goals, "ag": m.away_goals, "stage": m.stage})
 
 
 def ingest_dates(engine: Engine, league: str, dates: list[date],

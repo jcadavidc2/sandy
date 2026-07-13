@@ -57,6 +57,7 @@ def parse_scoreboard_events(payload: dict) -> list[MlsMatch]:
                 match_date=kicked.astimezone(DISPLAY_TZ).date(),
                 kickoff_utc=kicked,
                 season=(ev.get("season") or {}).get("year"),
+                stage=(ev.get("season") or {}).get("slug"),
                 status=status,
                 home=teams["home"],
                 away=teams["away"],
