@@ -16,7 +16,8 @@ tg() {
         -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=$1" > /dev/null 2>&1 || true
 }
 
-CUPS="ucl uel lib sud lgc ccc"
+# Resumable: override to skip already-backfilled cups, e.g. CUPS="uel lib" ./cups_bootstrap.sh
+CUPS="${CUPS:-ucl uel lib sud lgc ccc}"
 
 for lg in $CUPS; do
     echo "[$(date -Iseconds)] backfill $lg..."

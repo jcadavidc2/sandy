@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -133,13 +134,31 @@ def backfill(config: Config | None = None, *, league: str, start: date,
     months = LEAGUES[league][3]
     end = end or datetime.now(DISPLAY_TZ).date()
     n_matches = 0
+    skipped_days: list[date] = []
     d = start
     while d <= end:
         if d.month in months:
-            n_matches += ingest_dates(engine, league, [d], client)
+            # Resilient day-walk: a transient ESPN 5xx on ONE date must not kill a
+            # 1000-day backfill (2026-07-13: a single 502 aborted the UEL crawl).
+            # Retry the day once after a pause; if it still fails, log + move on —
+            # one lost historical day among 3 seasons is immaterial, and a re-run
+            # (idempotent upserts) can always fill it in.
+            try:
+                n_matches += ingest_dates(engine, league, [d], client)
+            except Exception:
+                logger.warning("soccer[%s] backfill: %s failed, retrying in 30s...", league, d)
+                time.sleep(30)
+                try:
+                    n_matches += ingest_dates(engine, league, [d], client)
+                except Exception:
+                    logger.exception("soccer[%s] backfill: skipping %s after retry", league, d)
+                    skipped_days.append(d)
         d += timedelta(days=1)
         if d.day == 1:
             logger.info("soccer[%s] backfill through %s (%s upserts)", league, d, n_matches)
+    if skipped_days:
+        logger.warning("soccer[%s] backfill skipped %d day(s): %s", league,
+                       len(skipped_days), ", ".join(str(x) for x in skipped_days[:10]))
     n_stats = 0
     if with_stats:
         while True:
