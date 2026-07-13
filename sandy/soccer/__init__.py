@@ -12,8 +12,10 @@ LEAGUES = {
     # ---- Cup competitions (added 2026-07-13) — same pipeline; their matches carry
     # a `stage` (ESPN season.slug) that feeds the is_knockout meta covariate, and
     # club form pulls cross-competition rows automatically (shared team_ids).
-    "ucl": ("uefa.champions", "Champions League", "⭐", set(range(1, 13))),          # quals Jul–Aug, league Sep–Jan, KO Feb–Jun
-    "uel": ("uefa.europa", "Europa League", "🇪🇺", set(range(1, 13))),               # quals Jul–Aug, league Sep–Jan, KO Feb–May
+    # UEFA cups: ESPN splits qualifying into its own feed code — both codes merge
+    # into the one Sandy league (ingest dedupes by event_id).
+    "ucl": (("uefa.champions", "uefa.champions_qual"), "Champions League", "⭐", set(range(1, 13))),  # quals Jul–Aug, league Sep–Jan, KO Feb–Jun
+    "uel": (("uefa.europa", "uefa.europa_qual"), "Europa League", "🇪🇺", set(range(1, 13))),          # quals Jul–Aug, league Sep–Jan, KO Feb–May
     "ccc": ("concacaf.champions", "Concacaf Champions Cup", "🌎", {2, 3, 4, 5, 6}),  # Feb–Jun
     "lgc": ("concacaf.leagues.cup", "Leagues Cup", "🇺🇸🇲🇽", {7, 8, 9}),              # Jul–Sep (2026: Aug 4–Sep 6)
     "lib": ("conmebol.libertadores", "Copa Libertadores", "🏆", set(range(2, 12))),  # Feb–Nov

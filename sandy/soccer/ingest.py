@@ -26,8 +26,19 @@ def ensure_schema(engine: Engine) -> None:
         conn.exec_driver_sql(MIGRATION.read_text())
 
 
-def _client(league: str) -> EspnClient:
-    return EspnClient(code=LEAGUES[league][0])
+def _clients(league: str) -> list[EspnClient]:
+    """One ESPN client per feed code. UEFA cups split qualifying rounds into a
+    separate '<code>_qual' league on ESPN — the registry lists BOTH codes and
+    every ingest merges them into the one Sandy league (dedupe by event_id)."""
+    codes = LEAGUES[league][0]
+    codes = (codes,) if isinstance(codes, str) else codes
+    return [EspnClient(code=c) for c in codes]
+
+
+def _as_clients(league: str, client) -> list[EspnClient]:
+    if client is None:
+        return _clients(league)
+    return client if isinstance(client, list) else [client]
 
 
 def _upsert_match(conn, league: str, m) -> None:
@@ -55,11 +66,17 @@ def _upsert_match(conn, league: str, m) -> None:
 
 
 def ingest_dates(engine: Engine, league: str, dates: list[date],
-                 client: EspnClient | None = None) -> int:
-    client = client or _client(league)
+                 client=None) -> int:
+    clients = _as_clients(league, client)
     n = 0
     for d in dates:
-        matches = parse_scoreboard_events(client.scoreboard(d.strftime("%Y%m%d")))
+        seen: set[int] = set()
+        matches = []
+        for cl in clients:
+            for m in parse_scoreboard_events(cl.scoreboard(d.strftime("%Y%m%d"))):
+                if m.event_id not in seen:
+                    seen.add(m.event_id)
+                    matches.append(m)
         with engine.begin() as conn:
             for m in matches:
                 _upsert_match(conn, league, m)
@@ -68,8 +85,8 @@ def ingest_dates(engine: Engine, league: str, dates: list[date],
 
 
 def ingest_stats_for_unstatted(engine: Engine, league: str, limit: int = 60,
-                               client: EspnClient | None = None) -> int:
-    client = client or _client(league)
+                               client=None) -> int:
+    clients = _as_clients(league, client)
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT event_id, home_team_id FROM soccer.matches
@@ -78,11 +95,18 @@ def ingest_stats_for_unstatted(engine: Engine, league: str, limit: int = 60,
         """), {"lg": league, "lim": limit}).fetchall()
     n = 0
     for eid, home_id in rows:
-        try:
-            stats = parse_summary_stats(eid, client.summary(eid))
-        except RuntimeError as e:
-            logger.warning("%s summary failed for %s: %s", league, eid, e)
-            continue
+        stats, parsed_ok = [], False
+        for cl in clients:  # qualifying-round events resolve under their own feed code
+            try:
+                stats = parse_summary_stats(eid, cl.summary(eid))
+                parsed_ok = True
+            except RuntimeError as e:
+                logger.warning("%s summary failed for %s via %s: %s", league, eid, cl._base, e)
+                stats = []
+            if stats:
+                break
+        if not parsed_ok:
+            continue  # every feed errored — leave unfilled so the next run retries
         with engine.begin() as conn:
             corners = {}
             for s in stats:
@@ -130,7 +154,7 @@ def backfill(config: Config | None = None, *, league: str, start: date,
     cfg = config or load_config()
     engine = create_engine(cfg)
     ensure_schema(engine)
-    client = _client(league)
+    client = _clients(league)
     months = LEAGUES[league][3]
     end = end or datetime.now(DISPLAY_TZ).date()
     n_matches = 0
