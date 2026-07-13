@@ -1042,6 +1042,7 @@ def nivel_for_pick(league: str, row_dict: dict, market: str, p: float,
     scoring error) degrades to the plain meta floors 0.90/0.95."""
     star_e = dia_e = "meta"
     floors: dict = {}
+    bundle = None
     try:
         bundle = _load_bundle(cfg)
         if bundle:
@@ -1053,10 +1054,15 @@ def nivel_for_pick(league: str, row_dict: dict, market: str, p: float,
         logger.exception("refiner bundle load failed — using meta floors")
     s = None
     if "refiner" in (star_e, dia_e):
-        try:
-            s = score_pick(league, row_dict, market, float(p), meta_p, cfg)
-        except Exception:
-            logger.exception("refiner score_pick failed for %s/%s — meta floors", league, market)
+        if bundle is not None and league not in bundle.get("thresholds", {}):
+            # league newer than the artifact (e.g. a cup added today) — the nightly
+            # retrain will include it; until then meta floors apply, quietly.
+            logger.debug("refiner artifact predates league %s — meta floors", league)
+        else:
+            try:
+                s = score_pick(league, row_dict, market, float(p), meta_p, cfg)
+            except Exception:
+                logger.exception("refiner score_pick failed for %s/%s — meta floors", league, market)
     mp = float(meta_p) if meta_p is not None else float("nan")
 
     def _tier(engine: str, tier: str, meta_floor: float) -> bool:
