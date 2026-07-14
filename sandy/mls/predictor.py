@@ -130,5 +130,33 @@ def predict_scheduled(config: Config | None = None, *, days_ahead: int = 2) -> l
         """), {"a": today, "b": today + timedelta(days=days_ahead)}).fetchall()
     preds = [build_prediction(engine, goals, corners, r, today) for r in rows]
     persist_predictions(engine, preds)
+    stamp_playoff_covariates(engine)
     logger.info("MLS predicted %s scheduled matches", len(preds))
     return preds
+
+
+# The same knockout markers as sandy/soccer/loop.py — expressed as a SQL regex so the
+# stamp is one set-based UPDATE. MLS slugs: 'regular-season' → 0.0; the playoff slugs
+# ('eastern/western-conference-playoffs---final', 'mls-cup') → 1.0. NULL stage → 0.0.
+_PLAYOFF_RE = "(final|semifinal|quarterfinal|playoff|knockout|round|play-in|repechaje|reclasif|cup|post-season)"
+
+_STAMP_SQL = text(f"""
+    UPDATE mls.match_predictions p
+    SET is_playoff = CASE WHEN m.stage IS NOT NULL AND lower(m.stage) ~ '{_PLAYOFF_RE}'
+                          THEN 1.0 ELSE 0.0 END
+    FROM mls.matches m
+    WHERE m.event_id = p.event_id
+      AND p.is_playoff IS DISTINCT FROM
+          (CASE WHEN m.stage IS NOT NULL AND lower(m.stage) ~ '{_PLAYOFF_RE}'
+                THEN 1.0 ELSE 0.0 END)
+""")
+
+
+def stamp_playoff_covariates(engine: Engine) -> int:
+    """is_playoff comes from the GAME row, not the model — stamp it set-based onto
+    every prediction whose value is missing/stale (covers live + backtest + history)."""
+    with engine.begin() as conn:
+        n = conn.execute(_STAMP_SQL).rowcount
+    if n:
+        logger.info("MLS stamped is_playoff on %s prediction rows", n)
+    return n

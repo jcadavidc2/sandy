@@ -94,3 +94,8 @@ ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS p_over_7_5 REAL;
 -- Broader totals ladder (added 2026-07-05).
 ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS p_over_3_5 REAL;
 ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS p_over_8_5 REAL;
+
+-- Playoffs covariates (2026-07-14): game_type=3 flag + game N of the best-of-7
+-- (the NHL game_id encodes it: last digit for playoff games).
+ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS is_playoff     REAL;
+ALTER TABLE nhl.game_predictions ADD COLUMN IF NOT EXISTS series_game_no REAL;

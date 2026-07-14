@@ -88,14 +88,16 @@ def _upsert_event(conn, ev: dict) -> bool:
             sides[c["homeAway"]] = (int(t["id"]), score)
         conn.execute(text("""
             INSERT INTO nba.games (event_id, match_date, start_utc, season, status,
-                home_team_id, away_team_id, home_points, away_points)
-            VALUES (:eid, :d, :ts, :season, :st, :h, :a, :hp, :ap)
+                home_team_id, away_team_id, home_points, away_points, season_type)
+            VALUES (:eid, :d, :ts, :season, :st, :h, :a, :hp, :ap, :stype)
             ON CONFLICT (event_id) DO UPDATE SET status = EXCLUDED.status,
                 home_points = COALESCE(EXCLUDED.home_points, nba.games.home_points),
                 away_points = COALESCE(EXCLUDED.away_points, nba.games.away_points),
-                start_utc = EXCLUDED.start_utc, match_date = EXCLUDED.match_date
+                start_utc = EXCLUDED.start_utc, match_date = EXCLUDED.match_date,
+                season_type = COALESCE(EXCLUDED.season_type, nba.games.season_type)
         """), {"eid": int(ev["id"]), "d": started.astimezone(DISPLAY_TZ).date(), "ts": started,
                "season": (ev.get("season") or {}).get("year"), "st": status,
+               "stype": (ev.get("season") or {}).get("type"),  # 1 pre / 2 regular / 3 post
                "h": sides["home"][0], "a": sides["away"][0],
                "hp": sides["home"][1], "ap": sides["away"][1]})
         return True
@@ -157,7 +159,9 @@ class NbaModel:
 
 
 def _load_games(engine: Engine, as_of: date | None = None) -> pd.DataFrame:
-    where = "status = 'FT' AND home_points IS NOT NULL"
+    # COALESCE(...,2): rows ingested before season_type existed are regular season
+    # (preseason only pollutes Oct 1-19; the re-walk backfill stamps those as 1).
+    where = "status = 'FT' AND home_points IS NOT NULL AND COALESCE(season_type, 2) != 1"
     params: dict = {}
     if as_of is not None:
         where += " AND match_date < :as_of"
@@ -317,8 +321,38 @@ _ROWS_SQL = """
     JOIN nba.teams t1 ON t1.team_id = g.home_team_id
     JOIN nba.teams t2 ON t2.team_id = g.away_team_id
     WHERE g.status = {status} AND g.match_date BETWEEN :a AND :b
+      AND COALESCE(g.season_type, 2) != 1  -- never predict/backtest preseason
     ORDER BY g.match_date, g.event_id
 """
+
+
+def stamp_playoff_covariates(engine) -> int:
+    """Playoff covariates come from the GAME row, not the model. is_playoff =
+    season_type 3; series_game_no = 1 + prior playoff meetings of the same pair in
+    the same postseason (best-of-7 ⇒ 1..7). Set-based + idempotent."""
+    with engine.begin() as conn:
+        n = conn.execute(text("""
+            WITH pv AS (
+                SELECT g.event_id,
+                       CASE WHEN g.season_type = 3 THEN 1.0 ELSE 0.0 END AS is_po,
+                       CASE WHEN g.season_type = 3 THEN
+                           (1 + (SELECT COUNT(*) FROM nba.games g2
+                                 WHERE g2.season_type = 3 AND g2.season = g.season
+                                   AND g2.match_date < g.match_date
+                                   AND ((g2.home_team_id = g.home_team_id AND g2.away_team_id = g.away_team_id)
+                                     OR (g2.home_team_id = g.away_team_id AND g2.away_team_id = g.home_team_id))))::real
+                       ELSE 0.0 END AS sgn
+                FROM nba.games g)
+            UPDATE nba.game_predictions p
+            SET is_playoff = pv.is_po, series_game_no = pv.sgn
+            FROM pv
+            WHERE pv.event_id = p.event_id
+              AND (p.is_playoff IS DISTINCT FROM pv.is_po
+                   OR p.series_game_no IS DISTINCT FROM pv.sgn)
+        """)).rowcount
+    if n:
+        logger.info("nba stamped playoff covariates on %s prediction rows", n)
+    return n
 
 
 def predict_scheduled(config: Config | None = None, *, days_ahead: int = 1) -> int:
@@ -334,6 +368,7 @@ def predict_scheduled(config: Config | None = None, *, days_ahead: int = 1) -> i
         for eid, mdate, hid, aid, hab, aab in rows:
             _persist(conn, eid, mdate, hid, aid, hab, aab, _markets(model, engine, hid, aid, today))
             n += 1
+    stamp_playoff_covariates(engine)
     logger.info("nba predicted %s games", n)
     return n
 
@@ -455,6 +490,7 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14) -> dict:
                 predicted += 1
         logger.info("nba backtest %s→%s: %s (train to date)", block_start, block_end, len(rows))
         block_start = block_end + timedelta(days=1)
+    stamp_playoff_covariates(engine)
     reconciled = reconcile(cfg)
     return {"predicted": predicted, "reconciled": reconciled}
 

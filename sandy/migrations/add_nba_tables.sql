@@ -74,3 +74,9 @@ CREATE TABLE IF NOT EXISTS nba.calibration_snapshots (
 ALTER TABLE nba.game_predictions ADD COLUMN IF NOT EXISTS p_over_210_5 REAL;
 ALTER TABLE nba.game_predictions ADD COLUMN IF NOT EXISTS p_over_240_5 REAL;
 ALTER TABLE nba.game_predictions ADD COLUMN IF NOT EXISTS p_over_245_5 REAL;
+
+-- Playoffs covariates (2026-07-14): ESPN season.type (1 pre / 2 regular / 3 post)
+-- on games; flag + best-of-7 game number on predictions.
+ALTER TABLE nba.games            ADD COLUMN IF NOT EXISTS season_type    INTEGER;
+ALTER TABLE nba.game_predictions ADD COLUMN IF NOT EXISTS is_playoff     REAL;
+ALTER TABLE nba.game_predictions ADD COLUMN IF NOT EXISTS series_game_no REAL;

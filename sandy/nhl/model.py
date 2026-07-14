@@ -192,5 +192,26 @@ def predict_scheduled(config: Config | None = None, *, days_ahead: int = 1) -> i
             mk = markets(model, engine, hid, aid, today)
             persist_prediction(conn, gid, mdate, hid, aid, hab, aab, mk)
             n += 1
+    stamp_playoff_covariates(engine)
     logger.info("NHL predicted %s scheduled games", n)
+    return n
+
+
+def stamp_playoff_covariates(engine) -> int:
+    """Playoff covariates come from the GAME row, not the model: game_type 3 =
+    playoffs, and the NHL game_id encodes the series game number in its last digit
+    (SSSS03 0R M G). Set-based + idempotent — covers live, backtest and history."""
+    with engine.begin() as conn:
+        n = conn.execute(text("""
+            UPDATE nhl.game_predictions p
+            SET is_playoff     = CASE WHEN g.game_type = 3 THEN 1.0 ELSE 0.0 END,
+                series_game_no = CASE WHEN g.game_type = 3 THEN (g.game_id % 10)::real ELSE 0.0 END
+            FROM nhl.games g
+            WHERE g.game_id = p.game_id
+              AND (p.is_playoff IS DISTINCT FROM (CASE WHEN g.game_type = 3 THEN 1.0 ELSE 0.0 END)
+                   OR p.series_game_no IS DISTINCT FROM
+                      (CASE WHEN g.game_type = 3 THEN (g.game_id % 10)::real ELSE 0.0 END))
+        """)).rowcount
+    if n:
+        logger.info("NHL stamped playoff covariates on %s prediction rows", n)
     return n

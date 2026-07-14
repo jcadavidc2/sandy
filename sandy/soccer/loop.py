@@ -135,17 +135,45 @@ def fit_all(config: Config | None = None) -> dict:
 
 
 # ------------------------------ predict ------------------------------------
-_NON_KNOCKOUT_STAGES = ("regular", "league-phase", "group")
+# Marker-based: a stage is ELIMINATION football only when its ESPN slug names an
+# elimination round. Validated against every slug in soccer.matches (2026-07-14):
+#   0.0 → league-phase, group-stage, first-stage (Sudamericana's groups!),
+#         regular-season, torneo-apertura, clausura, NULL (domestic history)
+#   1.0 → *-round (first/second/third/playoff/knockout-round, round-of-16),
+#         quarterfinals, semifinals, finals, apertura---semifinals (liguilla),
+#         clausura---semifinals (cuadrangulares), mls-cup, *-playoffs---final
+# The old inverse heuristic marked 'torneo-apertura' and 'first-stage' as knockout.
+_KNOCKOUT_MARKERS = ("final", "semifinal", "quarterfinal", "playoff", "knockout",
+                     "round", "play-in", "repechaje", "reclasif", "cup", "post-season")
 
 
 def _is_knockout(stage: str | None) -> float:
-    """Competition-stage covariate: 1.0 for elimination football (cup knockouts AND
-    two-legged qualifying ties), 0.0 for group/league play. Domestic leagues have
-    stage=NULL for their whole history → 0.0, so their metas are unaffected."""
     if not stage:
         return 0.0
     s = stage.lower()
-    return 0.0 if any(t in s for t in _NON_KNOCKOUT_STAGES) else 1.0
+    return 1.0 if any(t in s for t in _KNOCKOUT_MARKERS) else 0.0
+
+
+_STAMP_SQL = text("""
+    UPDATE soccer.match_predictions p
+    SET is_knockout = CASE WHEN m.stage IS NOT NULL AND lower(m.stage) ~ :re
+                           THEN 1.0 ELSE 0.0 END
+    FROM soccer.matches m
+    WHERE m.event_id = p.event_id
+      AND p.is_knockout IS DISTINCT FROM
+          (CASE WHEN m.stage IS NOT NULL AND lower(m.stage) ~ :re THEN 1.0 ELSE 0.0 END)
+""")
+
+
+def stamp_stage_covariates(engine) -> int:
+    """Set-based, idempotent re-stamp of is_knockout from matches.stage — keeps
+    history and heuristic changes consistent across ALL soccer leagues (the same
+    markers as _is_knockout, expressed as one SQL regex)."""
+    with engine.begin() as conn:
+        n = conn.execute(_STAMP_SQL, {"re": "(" + "|".join(_KNOCKOUT_MARKERS) + ")"}).rowcount
+    if n:
+        logger.info("soccer stamped is_knockout on %s prediction rows", n)
+    return n
 
 
 def _predict_row(engine, goals: DixonColesModel, corners: DixonColesModel, league, row,
@@ -227,6 +255,7 @@ def predict_scheduled(config: Config | None = None, *, days_ahead: int = 2) -> i
             for r in rows:
                 conn.execute(_UPSERT, _predict_row(engine, goals, corners, lg, r, today))
                 n += 1
+    stamp_stage_covariates(engine)
     logger.info("soccer predicted %s matches across leagues", n)
     return n
 
@@ -371,6 +400,7 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14,
                 logger.info("soccer[%s] backtest %s→%s: %s (train %s)",
                             lg, block_start, block_end, len(rows), len(gdf))
             block_start = block_end + timedelta(days=1)
+    stamp_stage_covariates(engine)
     reconciled = reconcile(cfg)
     return {"predicted": predicted, "reconciled": reconciled}
 

@@ -12,7 +12,7 @@ from sandy.config import Config, load_config
 from sandy.db import create_engine
 from sandy.football.ratings import fit_dixon_coles
 
-from .predictor import build_prediction, persist_predictions
+from .predictor import build_prediction, persist_predictions, stamp_playoff_covariates
 from .ratings import hyper, load_corner_matches, load_goal_matches
 from .reconciler import reconcile
 
@@ -63,6 +63,7 @@ def run_backtest(config: Config | None = None, *, start: date | None = None,
         logger.info("MLS backtest block %s→%s: %s predictions (train n=%s)",
                     block_start, block_end, len(preds), len(gdf))
         block_start = block_end + timedelta(days=1)
+    stamp_playoff_covariates(engine)
     reconciled = reconcile(cfg)
     logger.info("MLS backtest done: %s predictions, %s reconciled", predicted, reconciled)
     return {"predicted": predicted, "reconciled": reconciled}

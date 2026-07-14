@@ -124,3 +124,7 @@ ALTER TABLE mls.match_predictions ADD COLUMN IF NOT EXISTS p_over_0_5          R
 ALTER TABLE mls.match_predictions ADD COLUMN IF NOT EXISTS p_over_5_5          REAL;
 ALTER TABLE mls.match_predictions ADD COLUMN IF NOT EXISTS p_corners_over_7_5  REAL;
 ALTER TABLE mls.match_predictions ADD COLUMN IF NOT EXISTS p_corners_over_12_5 REAL;
+
+-- Playoffs covariate (2026-07-14): per-event ESPN stage slug + its model flag.
+ALTER TABLE mls.matches           ADD COLUMN IF NOT EXISTS stage      TEXT;
+ALTER TABLE mls.match_predictions ADD COLUMN IF NOT EXISTS is_playoff REAL;

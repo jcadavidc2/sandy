@@ -158,6 +158,8 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14,
             logger.info("NHL backtest block %s→%s: %s games (train n=%s)",
                         block_start, block_end, len(rows), len(df))
         block_start = block_end + timedelta(days=1)
+    from .model import stamp_playoff_covariates
+    stamp_playoff_covariates(engine)
     reconciled = reconcile(cfg)
     return {"predicted": predicted, "reconciled": reconciled}
 

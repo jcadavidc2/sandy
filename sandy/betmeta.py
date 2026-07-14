@@ -57,7 +57,7 @@ WX_FEATURES = ("wx_temp", "wx_wind", "wx_precip", "wx_dome")
 
 # Bump when the _frame/_row_features feature schema changes — downstream caches
 # (betrefine's OOF store) key on this so a feature upgrade invalidates them.
-FRAME_VERSION = 3
+FRAME_VERSION = 4  # v4 (2026-07-14): playoff/stage covariates (is_playoff, series_game_no, is_knockout)
 
 # league → (schema, predictions table, markets: name → (prob col, kind, line))
 SPECS = {
@@ -78,7 +78,9 @@ SPECS = {
             "corners_over_11_5": ("p_corners_over_11_5", "corners", 11.5),
             "corners_over_12_5": ("p_corners_over_12_5", "corners", 12.5),
         },
-        "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"],
+        # is_playoff: MLS Cup playoffs covariate (gated adoption 2026-07-14).
+        "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away",
+                     "is_playoff"],
         "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
                       "form_points_5", "rest_days", "played_10"],
         "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
@@ -103,7 +105,11 @@ SPECS = {
                 "corners_over_11_5": ("p_corners_over_11_5", "corners", 11.5),
                 "corners_over_12_5": ("p_corners_over_12_5", "corners", 12.5),
             },
-            "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"],
+            # col/mex get the liguilla/cuadrangulares covariate (gated adoption
+            # 2026-07-14 — retrain_gated reverts any league it doesn't help);
+            # esp/eng are pure leagues with no playoff round.
+            "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"]
+                        + (["is_knockout"] if lg in ("col", "mex") else []),
             "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
                           "form_points_5", "rest_days", "played_10"],
             "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
@@ -154,7 +160,10 @@ SPECS = {
             "over_240_5": ("p_over_240_5", "points", 240.5),
             "over_245_5": ("p_over_245_5", "points", 245.5),
         },
-        "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win"],
+        # Playoffs covariates (gated adoption 2026-07-14): flag + game N of the
+        # best-of-7 (a game 7 is not a game 1).
+        "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win",
+                     "is_playoff", "series_game_no"],
         "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
         "err_expected": ["exp_total"], "err_actual": "actual_total",
     },
@@ -168,7 +177,9 @@ SPECS = {
             "over_47_5": ("p_over_47_5", "points", 47.5),
             "over_51_5": ("p_over_51_5", "points", 51.5),
         },
-        "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win"],
+        # is_playoff: single-elimination January football (gated adoption 2026-07-14).
+        "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win",
+                     "is_playoff"],
         "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
         "err_expected": ["exp_total"], "err_actual": "actual_total",
         # Weather covariates DORMANT for the NFL meta: the 2026-07-07 gated
@@ -193,7 +204,9 @@ SPECS = {
             "over_7_5": ("p_over_7_5", "goals", 7.5),
             "over_8_5": ("p_over_8_5", "goals", 8.5),
         },
-        "num_cols": ["lambda_home", "lambda_away"],
+        # Playoffs covariates (gated adoption 2026-07-14): game_type=3 flag + game N
+        # of the best-of-7 (decoded from the NHL game_id's last digit).
+        "num_cols": ["lambda_home", "lambda_away", "is_playoff", "series_game_no"],
         "form_keys": ["gf_5", "ga_5", "gf_10", "ga_10", "points_10", "rest_days", "played_10"],
         "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
     },

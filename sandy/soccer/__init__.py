@@ -16,7 +16,7 @@ LEAGUES = {
     # into the one Sandy league (ingest dedupes by event_id).
     "ucl": (("uefa.champions", "uefa.champions_qual"), "Champions League", "⭐", set(range(1, 13))),  # quals Jul–Aug, league Sep–Jan, KO Feb–Jun
     "uel": (("uefa.europa", "uefa.europa_qual"), "Europa League", "🇪🇺", set(range(1, 13))),          # quals Jul–Aug, league Sep–Jan, KO Feb–May
-    "ccc": ("concacaf.champions", "Concacaf Champions Cup", "🌎", {2, 3, 4, 5, 6}),  # Feb–Jun
+    "ccc": ("concacaf.champions", "Concacaf Champions Cup", "🌎", {2, 3, 4, 5, 6, 10, 11, 12}),  # Feb–Jun (COVID 2020 edition ran Oct–Dec)
     "lgc": ("concacaf.leagues.cup", "Leagues Cup", "🇺🇸🇲🇽", {7, 8, 9}),              # Jul–Sep (2026: Aug 4–Sep 6)
     "lib": ("conmebol.libertadores", "Copa Libertadores", "🏆", set(range(2, 12))),  # Feb–Nov
     "sud": ("conmebol.sudamericana", "Copa Sudamericana", "🥈", set(range(2, 12))),  # Feb–Nov

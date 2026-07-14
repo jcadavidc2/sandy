@@ -111,14 +111,18 @@ def _upsert_event(conn, ev: dict) -> bool:
             sides[c["homeAway"]] = (int(t["id"]), score)
         conn.execute(text("""
             INSERT INTO nfl.games (event_id, match_date, start_utc, season, status,
-                home_team_id, away_team_id, home_points, away_points)
-            VALUES (:eid, :d, :ts, :season, :st, :h, :a, :hp, :ap)
+                home_team_id, away_team_id, home_points, away_points, season_type, week)
+            VALUES (:eid, :d, :ts, :season, :st, :h, :a, :hp, :ap, :stype, :wk)
             ON CONFLICT (event_id) DO UPDATE SET status = EXCLUDED.status,
                 home_points = COALESCE(EXCLUDED.home_points, nfl.games.home_points),
                 away_points = COALESCE(EXCLUDED.away_points, nfl.games.away_points),
-                start_utc = EXCLUDED.start_utc, match_date = EXCLUDED.match_date
+                start_utc = EXCLUDED.start_utc, match_date = EXCLUDED.match_date,
+                season_type = COALESCE(EXCLUDED.season_type, nfl.games.season_type),
+                week = COALESCE(EXCLUDED.week, nfl.games.week)
         """), {"eid": int(ev["id"]), "d": started.astimezone(DISPLAY_TZ).date(), "ts": started,
                "season": season.get("year"), "st": status,
+               "stype": season.get("type"),  # 2 regular / 3 postseason (1 never ingested)
+               "wk": (ev.get("week") or {}).get("number"),
                "h": sides["home"][0], "a": sides["away"][0],
                "hp": sides["home"][1], "ap": sides["away"][1]})
         return True
@@ -418,7 +422,25 @@ def predict_scheduled(config: Config | None = None, *, days_ahead: int = 1) -> i
             _persist(conn, eid, mdate, hid, aid, hab, aab,
                      _markets(model, engine, hid, aid, today, wx=wx))
             n += 1
+    stamp_playoff_covariates(engine)
     logger.info("nfl predicted %s games", n)
+    return n
+
+
+def stamp_playoff_covariates(engine) -> int:
+    """is_playoff comes from the GAME row (ESPN season.type 3), not the model.
+    Set-based + idempotent — covers live, backtest and history."""
+    with engine.begin() as conn:
+        n = conn.execute(text("""
+            UPDATE nfl.game_predictions p
+            SET is_playoff = CASE WHEN g.season_type = 3 THEN 1.0 ELSE 0.0 END
+            FROM nfl.games g
+            WHERE g.event_id = p.event_id
+              AND p.is_playoff IS DISTINCT FROM
+                  (CASE WHEN g.season_type = 3 THEN 1.0 ELSE 0.0 END)
+        """)).rowcount
+    if n:
+        logger.info("nfl stamped is_playoff on %s prediction rows", n)
     return n
 
 
@@ -543,6 +565,7 @@ def run_backtest(config: Config | None = None, *, refit_days: int = 14) -> dict:
                 predicted += 1
         logger.info("nfl backtest %s→%s: %s (train to date)", block_start, block_end, len(rows))
         block_start = block_end + timedelta(days=1)
+    stamp_playoff_covariates(engine)
     reconciled = reconcile(cfg)
     return {"predicted": predicted, "reconciled": reconciled}
 

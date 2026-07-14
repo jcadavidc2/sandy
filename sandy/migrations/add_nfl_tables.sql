@@ -71,3 +71,8 @@ CREATE TABLE IF NOT EXISTS nfl.calibration_snapshots (
     recommended_threshold REAL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Playoffs covariate (2026-07-14): ESPN season.type + week on games; flag on predictions.
+ALTER TABLE nfl.games            ADD COLUMN IF NOT EXISTS season_type INTEGER;
+ALTER TABLE nfl.games            ADD COLUMN IF NOT EXISTS week        INTEGER;
+ALTER TABLE nfl.game_predictions ADD COLUMN IF NOT EXISTS is_playoff  REAL;

@@ -44,17 +44,18 @@ def _upsert_match(conn, m: MlsMatch) -> None:
         """), {"id": t.team_id, "name": t.name, "ab": t.abbrev, "logo": t.logo_url})
     conn.execute(text("""
         INSERT INTO mls.matches (event_id, match_date, kickoff_utc, season, status,
-                                 home_team_id, away_team_id, home_goals, away_goals)
-        VALUES (:eid, :d, :ko, :season, :status, :h, :a, :hg, :ag)
+                                 home_team_id, away_team_id, home_goals, away_goals, stage)
+        VALUES (:eid, :d, :ko, :season, :status, :h, :a, :hg, :ag, :stage)
         ON CONFLICT (event_id) DO UPDATE SET
             status = EXCLUDED.status,
             home_goals = COALESCE(EXCLUDED.home_goals, mls.matches.home_goals),
             away_goals = COALESCE(EXCLUDED.away_goals, mls.matches.away_goals),
             kickoff_utc = EXCLUDED.kickoff_utc,
-            match_date = EXCLUDED.match_date
+            match_date = EXCLUDED.match_date,
+            stage = COALESCE(EXCLUDED.stage, mls.matches.stage)
     """), {"eid": m.event_id, "d": m.match_date, "ko": m.kickoff_utc, "season": m.season,
            "status": m.status, "h": m.home.team_id, "a": m.away.team_id,
-           "hg": m.home_goals, "ag": m.away_goals})
+           "hg": m.home_goals, "ag": m.away_goals, "stage": m.stage})
 
 
 def _upsert_stats(conn, event_id: int, home_team_id: int, rows: list[MlsTeamStats]) -> None:
