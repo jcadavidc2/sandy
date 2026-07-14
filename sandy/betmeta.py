@@ -78,9 +78,9 @@ SPECS = {
             "corners_over_11_5": ("p_corners_over_11_5", "corners", 11.5),
             "corners_over_12_5": ("p_corners_over_12_5", "corners", 12.5),
         },
-        # is_playoff: MLS Cup playoffs covariate (gated adoption 2026-07-14).
-        "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away",
-                     "is_playoff"],
+        # is_playoff REJECTED by the 2026-07-14 gate (acc@thr .8827→.8619): the
+        # stamped column stays on the table (dormant) but the meta doesn't use it.
+        "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"],
         "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
                       "form_points_5", "rest_days", "played_10"],
         "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
@@ -105,11 +105,11 @@ SPECS = {
                 "corners_over_11_5": ("p_corners_over_11_5", "corners", 11.5),
                 "corners_over_12_5": ("p_corners_over_12_5", "corners", 12.5),
             },
-            # col/mex get the liguilla/cuadrangulares covariate (gated adoption
-            # 2026-07-14 — retrain_gated reverts any league it doesn't help);
-            # esp/eng are pure leagues with no playoff round.
+            # is_knockout (cuadrangulares) ADOPTED for col only — gate verdict
+            # 2026-07-14: col improved AUC .724→.7253 AND acc .8851→.8876; mex
+            # REJECTED (AUC .6804→.6731). esp/eng have no playoff round.
             "num_cols": ["lambda_home", "lambda_away", "corner_lambda_home", "corner_lambda_away"]
-                        + (["is_knockout"] if lg in ("col", "mex") else []),
+                        + (["is_knockout"] if lg == "col" else []),
             "form_keys": ["goals_for_5", "goals_against_5", "corners_for_5", "corners_against_5",
                           "form_points_5", "rest_days", "played_10"],
             "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
@@ -177,9 +177,9 @@ SPECS = {
             "over_47_5": ("p_over_47_5", "points", 47.5),
             "over_51_5": ("p_over_51_5", "points", 51.5),
         },
-        # is_playoff: single-elimination January football (gated adoption 2026-07-14).
-        "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win",
-                     "is_playoff"],
+        # is_playoff REJECTED by the 2026-07-14 gate (AUC .6002→.5856, acc −3.2pp —
+        # 13 playoff games/season is too thin). Column stays on the table, dormant.
+        "num_cols": ["exp_home_points", "exp_away_points", "exp_total", "sigma_total", "p_home_win"],
         "form_keys": ["pf_5", "pa_5", "pf_10", "pa_10", "wins_10", "rest_days", "played_10"],
         "err_expected": ["exp_total"], "err_actual": "actual_total",
         # Weather covariates DORMANT for the NFL meta: the 2026-07-07 gated
@@ -204,9 +204,9 @@ SPECS = {
             "over_7_5": ("p_over_7_5", "goals", 7.5),
             "over_8_5": ("p_over_8_5", "goals", 8.5),
         },
-        # Playoffs covariates (gated adoption 2026-07-14): game_type=3 flag + game N
-        # of the best-of-7 (decoded from the NHL game_id's last digit).
-        "num_cols": ["lambda_home", "lambda_away", "is_playoff", "series_game_no"],
+        # is_playoff/series_game_no REJECTED by the 2026-07-14 gate (flat AUC,
+        # acc −0.7pp). Columns stay stamped on the table, dormant.
+        "num_cols": ["lambda_home", "lambda_away"],
         "form_keys": ["gf_5", "ga_5", "gf_10", "ga_10", "points_10", "rest_days", "played_10"],
         "err_expected": ["lambda_home", "lambda_away"], "err_actual": "actual_total_goals",
     },
