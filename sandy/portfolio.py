@@ -248,14 +248,16 @@ def candidates_for(day: date, engine) -> list[dict]:
 
 
 # ------------------------------------------------------------------ tickets --
-def enumerate_tickets(cands: list[dict]) -> list[dict]:
-    """Singles + cross-game parlays (2..MAX_PARLAY_LEGS legs), top-EV pruned.
+def enumerate_tickets(cands: list[dict], max_legs: int = MAX_PARLAY_LEGS) -> list[dict]:
+    """Singles + cross-game parlays (2..max_legs legs), top-EV pruned.
 
     Every candidate is a different game by construction, so any combination
     satisfies the "all legs from different games" rule. Parlays are only
     enumerated over the MAX_PARLAY_POOL best candidates (combinatorics guard
     for the 1.9GB box); singles exist for every candidate and always survive
     the pruning. prob/prob_raw are Π of leg probs (independence assumption).
+    `max_legs` lets a caller with a different probability regime cap the
+    compounding (Portfolio B caps at 4 — see portfolio_picks.B_MAX_PARLAY_LEGS).
     """
     def _ticket(idxs) -> dict:
         cuota = p_bet = p_raw = 1.0
@@ -270,7 +272,7 @@ def enumerate_tickets(cands: list[dict]) -> list[dict]:
     singles = [_ticket((i,)) for i in range(len(cands))]
     pool = range(min(len(cands), MAX_PARLAY_POOL))
     parlays = [_ticket(idxs)
-               for k in range(2, min(len(pool), MAX_PARLAY_LEGS) + 1)
+               for k in range(2, min(len(pool), max_legs) + 1)
                for idxs in combinations(pool, k)]
     parlays.sort(key=lambda t: -t["ev"])
     keep = max(TOP_TICKETS - len(singles), 0)

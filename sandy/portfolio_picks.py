@@ -97,6 +97,14 @@ logger = logging.getLogger(__name__)
 # models deserve to be bet EVERY day they produce ✅ picks.
 MIN_DEPLOY_FRACTION = 0.10
 
+# B prices with RAW model probabilities (no market shrink — its thesis), so parlay
+# probability = Π p_i compounds the tails' optimism. Calibration audit 2026-07-14
+# over all settled tickets: ≤4 legs predicted-vs-real is honest (even conservative),
+# but 5+ legs believed 26.6% and hit 9.1% (1/11, ROI −50%). Cap where calibration
+# breaks. Portfolio A keeps MAX_PARLAY_LEGS=7 — its 70/30 shrink showed NO
+# overconfidence at any size (it is the control for this experiment).
+B_MAX_PARLAY_LEGS = 4
+
 
 # ------------------------------------------------------------------- schema --
 def ensure_tables(engine) -> None:
@@ -329,7 +337,7 @@ def build_portfolio(day: date | None = None, budget: float | None = None,
                     "staked": 0.0, "forzado": False, "summary": None, "persisted": False}
 
     if cands and budget >= STEP:
-        tickets = enumerate_tickets(cands)
+        tickets = enumerate_tickets(cands, max_legs=B_MAX_PARLAY_LEGS)
         seed = int(day.strftime("%Y%m%d"))
         stakes, pnl, forced = allocate_day(cands, tickets, budget, bank, risk, n_sims, seed)
         result["forzado"] = forced
