@@ -82,7 +82,12 @@ INITIAL_BANK = 100_000.0        # paper COP-like units
 STEP = 500.0                    # BetPlay minimum bet / stake granularity
 BUDGET_FRACTION = 0.30          # daily budget = 30% of available bankroll (user)
 GAME_CAP_FRACTION = 0.30        # max exposure to ONE game across all tickets
-MAX_PARLAY_LEGS = 7
+MAX_PARLAY_LEGS = 4             # owner decision 2026-07-14: the cups expansion exploded the
+                                # candidate pool and the optimizer started building x6/x7
+                                # parlays (13 of 15 tickets on 07-14!) — sizes with ZERO
+                                # settled evidence, compounding estimation error, and no
+                                # recovery variability (one bad leg kills everything).
+                                # Settled data: x1-x4 profitable in both portfolios.
 MAX_PARLAY_POOL = 16            # enumerate parlays from the top-EV candidates only
 MAX_TICKETS_PER_DAY = 15        # operability cap (owner, 2026-07-12): once 15 tickets are
                                 # open, the greedy can only TOP UP existing ones — the
