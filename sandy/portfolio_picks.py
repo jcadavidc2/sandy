@@ -42,7 +42,8 @@ Rules (decided with the user — mirror sandy/portfolio.py unless stated):
     so each leg re-grades straight from the prediction tables via
     sandy.betmeta._correct — the same source odds.reconcile_value_log uses.
     Grading rule is A's settle_ticket (imported): all win → stake·cuota, any
-    lose → 0, unreconciled beyond VOID_AFTER_DAYS → void → refund.
+    lose → 0; a void leg (postponed/moved game) drops out and the parlay is
+    re-priced over the remaining legs — only an all-void ticket refunds.
   * STORAGE     — odds.portfolio_picks_log / odds.bankroll_picks, same shapes
     as A's tables but fully separate; A's rows are never touched.
 
@@ -447,8 +448,14 @@ def _leg_result(conn, leg: dict, today: date) -> str:
                            None if leg.get("line") is None else float(leg["line"]), p_side)
             if won is not None:
                 return "win" if won else "lose"
+        # No outcome yet on a past date: ask the vertical's matches table whether the
+        # game was postponed/moved — void immediately instead of waiting VOID_AFTER_DAYS.
+        if date.fromisoformat(leg["date"]) < today:
+            from sandy.odds import game_postponed
+            if game_postponed(conn, spec, leg["date"], leg["home"], leg["away"]):
+                return "void"
     if date.fromisoformat(leg["date"]) <= today - timedelta(days=VOID_AFTER_DAYS):
-        return "void"  # never reconciled → postponed/cancelled
+        return "void"  # never reconciled → postponed/cancelled (backstop timer)
     return "pending"
 
 
@@ -468,7 +475,9 @@ def settle_portfolio(cfg: Config | None = None, today: date | None = None) -> di
         for t in open_rows:
             legs = t.legs if isinstance(t.legs, list) else json.loads(t.legs)
             results = [_leg_result(conn, leg, today) for leg in legs]
-            status, returned = settle_ticket(results, float(t.stake), float(t.ticket_cuota))
+            cuotas = [leg.get("cuota") for leg in legs]
+            status, returned = settle_ticket(results, float(t.stake), float(t.ticket_cuota),
+                                             leg_cuotas=cuotas if all(c is not None for c in cuotas) else None)
             if status == "open":
                 still_open += 1
                 continue

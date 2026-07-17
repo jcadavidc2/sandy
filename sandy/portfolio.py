@@ -42,10 +42,10 @@ as possible":
   * SETTLING    — from OUR predictions' reconciled outcomes via
     odds.value_log.result (filled by sandy.odds.reconcile_value_log). All
     legs win → returned = stake × cuota; any leg loses → returned = 0. A leg
-    whose game never reconciles within VOID_AFTER_DAYS days (postponed /
-    cancelled) VOIDS the whole ticket → the stake is refunded. Real books
-    instead re-price the parlay without the void leg; the full refund is a
-    deliberate, documented simplification.
+    whose game is postponed/moved (reconcile marks it void, or it never
+    reconciles within VOID_AFTER_DAYS days) DROPS OUT and the parlay is
+    re-priced over the remaining legs (void leg cuota → 1.0), exactly like
+    real books; only a ticket whose EVERY leg is void refunds the stake.
   * PROJECTIONS — project_bankroll() Monte-Carlos the next N days assuming
     days like the recent logged ones (each simulated day replays a randomly
     chosen recent day's P&L-per-bankroll distribution, preserving within-day
@@ -492,13 +492,17 @@ def _clear_day(conn, day: date) -> None:
 
 
 # ------------------------------------------------------------------- settle --
-def settle_ticket(leg_results: list[str], stake: float, cuota: float
-                  ) -> tuple[str, float | None]:
+def settle_ticket(leg_results: list[str], stake: float, cuota: float,
+                  leg_cuotas: list[float] | None = None) -> tuple[str, float | None]:
     """Pure grading rule (unit-tested). leg_results ∈ {win, lose, void, pending}.
 
     any lose → lost/0 (a dead leg kills the ticket, even with legs pending);
     any pending (and none lost) → still open;
-    any void (postponed game) → whole ticket void → stake refunded;
+    void legs (postponed/moved games) DROP OUT like real books re-price them:
+    the parlay pays stake × Π(cuota of the remaining WINNING legs) — a void leg's
+    cuota simply becomes 1.0. ALL legs void → ticket void → stake refunded.
+    leg_cuotas gives the per-leg cuotas (same order as leg_results); without it
+    (legacy rows missing per-leg prices) any void falls back to a full refund.
     all win → won → stake × cuota.
     """
     if any(r == "lose" for r in leg_results):
@@ -506,7 +510,13 @@ def settle_ticket(leg_results: list[str], stake: float, cuota: float
     if any(r == "pending" for r in leg_results):
         return "open", None
     if any(r == "void" for r in leg_results):
-        return "void", round(float(stake), 2)
+        if all(r == "void" for r in leg_results) or leg_cuotas is None:
+            return "void", round(float(stake), 2)
+        repriced = 1.0
+        for r, lc in zip(leg_results, leg_cuotas):
+            if r == "win":
+                repriced *= float(lc)
+        return "won", round(float(stake) * repriced, 2)
     return "won", round(float(stake) * float(cuota), 2)
 
 
@@ -552,7 +562,9 @@ def settle_portfolio(cfg: Config | None = None, today: date | None = None) -> di
         for t in open_rows:
             legs = t.legs if isinstance(t.legs, list) else json.loads(t.legs)
             results = [_leg_result(conn, leg, today) for leg in legs]
-            status, returned = settle_ticket(results, float(t.stake), float(t.ticket_cuota))
+            cuotas = [leg.get("cuota") for leg in legs]
+            status, returned = settle_ticket(results, float(t.stake), float(t.ticket_cuota),
+                                             leg_cuotas=cuotas if all(c is not None for c in cuotas) else None)
             if status == "open":
                 still_open += 1
                 continue

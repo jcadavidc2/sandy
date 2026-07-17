@@ -35,9 +35,32 @@ def test_pending_leg_keeps_ticket_open():
     assert settle_ticket(["win", "pending"], stake=500.0, cuota=3.0) == ("open", None)
 
 
-def test_void_leg_refunds_whole_stake():
-    # documented simplification: any postponed leg voids the ticket → refund
+def test_void_leg_reprices_parlay_over_remaining_legs():
+    # real-book rule: the postponed leg's cuota becomes 1.0; the rest still pay
+    status, returned = settle_ticket(["win", "void"], stake=500.0, cuota=3.0,
+                                     leg_cuotas=[1.24, 1.77])
+    assert status == "won"
+    assert returned == pytest.approx(500.0 * 1.24)
+
+
+def test_void_leg_repricing_multi_leg():
+    status, returned = settle_ticket(["win", "void", "win"], stake=1000.0, cuota=5.0,
+                                     leg_cuotas=[1.5, 2.0, 1.8])
+    assert status == "won"
+    assert returned == pytest.approx(1000.0 * 1.5 * 1.8)
+
+
+def test_all_legs_void_refunds_whole_stake():
+    assert settle_ticket(["void", "void"], 500.0, 3.0, leg_cuotas=[1.5, 2.0]) == ("void", 500.0)
+
+
+def test_void_without_leg_cuotas_falls_back_to_refund():
+    # legacy rows without per-leg prices can't re-price — refund like before
     assert settle_ticket(["win", "void"], stake=500.0, cuota=3.0) == ("void", 500.0)
+
+
+def test_void_leg_with_pending_sibling_stays_open():
+    assert settle_ticket(["void", "pending"], 500.0, 3.0, leg_cuotas=[1.5, 2.0]) == ("open", None)
 
 
 def test_lost_leg_settles_even_with_pending_or_void_siblings():

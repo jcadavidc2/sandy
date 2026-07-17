@@ -741,6 +741,39 @@ def log_value_picks(day: date | None = None, cfg: Config | None = None,
     return found
 
 
+def game_postponed(conn, spec: dict, day, home: str, away: str) -> bool:
+    """True when the vertical's `<schema>.matches` table says this game never happened
+    on `day`: status PPD/CANC/ABD, the event moved to another date (ESPN reschedules
+    keep the event id — e.g. MLS 761660 went 7/16 → 10/6), or it's still 'NS' more
+    than 24h after its scheduled kickoff (vanished from the feed, stale row).
+    Best-effort: schemas without a matches table (the mlb view hides moved games
+    itself) return False and the caller falls back to its own timers."""
+    schema = spec["table"].split(".")[0]
+    if not conn.execute(text(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = :s AND table_name = 'matches'"),
+            {"s": schema}).scalar():
+        return False
+    extra = f" AND {spec['where']}" if spec.get("where") else ""
+    pred = conn.execute(text(f"""
+        SELECT * FROM {spec['table']}
+        WHERE match_date = :d AND btrim(home_team) = :h AND btrim(away_team) = :a{extra}
+        ORDER BY id LIMIT 1"""), {"d": day, "h": home, "a": away}).fetchone()
+    if pred is None or pred._mapping.get("event_id") is None:
+        return False
+    m = conn.execute(text(f"""
+        SELECT status, match_date, (kickoff_utc < now() - interval '24 hours') AS stale
+        FROM {schema}.matches WHERE event_id = :e LIMIT 1"""),
+        {"e": pred._mapping["event_id"]}).fetchone()
+    if m is None:
+        return True  # event vanished from the feed entirely
+    st = (m.status or "").upper()
+    if st in ("PPD", "CANC", "CANCELLED", "POSTPONED", "ABD", "ABANDONED", "AWD"):
+        return True
+    if str(m.match_date) != str(day)[:10]:
+        return True  # event rescheduled to another date — our pre-match price is void
+    return st == "NS" and bool(m.stale)  # 'not started' a day past kickoff → never played
+
+
 def reconcile_value_log(cfg: Config | None = None) -> dict:
     """Fill result + units on settled value picks from OUR predictions'
     reconciled outcomes (win: +(cuota-1), lose: -1; flat 1u stake)."""
@@ -782,7 +815,19 @@ def reconcile_value_log(cfg: Config | None = None) -> dict:
                 ORDER BY id LIMIT 1
             """), {"d": v.date, "h": v.home, "a": v.away}).fetchone()
             if g is None:
-                still_open += 1
+                # No outcome yet: for past dates, ask the matches table whether the game
+                # was postponed/moved/never played — void now instead of waiting days.
+                if v.date < datetime.now(DISPLAY_TZ).date() and game_postponed(conn, spec, v.date, v.home, v.away):
+                    conn.execute(text("""
+                        UPDATE odds.value_log
+                        SET result = 'void', units = 0, settled_at = now()
+                        WHERE id = :id
+                    """), {"id": v.id})
+                    settled += 1
+                    logger.info("VOID (postponed/moved per matches status) value pick id=%s %s %s vs %s %s",
+                                v.id, v.date, v.home, v.away, v.market)
+                else:
+                    still_open += 1
                 continue
             _pcol, kind, _line = spec["markets"][v.market]
             # _correct scores "the pick at prob p"; encode our logged side as p
