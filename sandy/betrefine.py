@@ -429,13 +429,20 @@ def build_refiner_dataset(cfg: Config, force_oof: bool = False):
     per_league, coverage, z_stats, thresholds, date_store = [], {}, {}, {}, {}
     for lg in LEAGUES:
         X = build_oof(lg, cfg, engine=engine, force=force_oof)
+        spec = SPECS[lg]
+        # Skip a league with no usable meta frame yet — an empty OOF (a cup still
+        # awaiting its season, e.g. soccer_lgc before the Aug edition → 0 rows) or one
+        # missing the base-expectation columns. Without this the whole meta² refiner
+        # crashes on that one league (found: soccer_lgc, broken nightly 2026-07-14→17).
+        if X is None or getattr(X, "empty", True) or any(c not in X.columns for c in spec["err_expected"]):
+            logger.info("refiner: skipping %s — no usable OOF frame yet (below its history bar / off-season)", lg)
+            continue
         art = _league_artifact(lg, cfg)
         thr_by = dict(art.get("threshold_by_market") or {})
         gthr = art.get("threshold")
         thresholds[lg] = {"by_market": thr_by, "global": gthr}
         info = _market_info(lg)
         neighbors = _line_neighbors(lg)
-        spec = SPECS[lg]
         # full-frame game-date list (season phase); schedule info, no outcomes
         date_store[lg] = np.sort(pd.to_datetime(X["_date"]).unique()).astype("datetime64[D]")
         # expected totals (vectorized; 2-term IEEE sums match the live path's
