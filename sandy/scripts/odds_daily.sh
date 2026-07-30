@@ -29,10 +29,23 @@ if ! nice -n 10 .venv/bin/python -m sandy.weather daily; then
 fi
 
 echo "[$(date -Iseconds)] odds daily (fetch frugal + match + value log + reconcile)..."
-if ! nice -n 10 .venv/bin/python -m sandy.odds daily; then
+# Captura la salida para leer los créditos restantes de The Odds API: el módulo NO falla por
+# quota agotada (los 401 se tragan por diseño) — el 25/7 se agotó y nadie se enteró por días.
+ODDS_OUT=$(mktemp)
+if ! nice -n 10 .venv/bin/python -m sandy.odds daily 2>&1 | tee "$ODDS_OUT"; then
+    rm -f "$ODDS_OUT"
     echo "[$(date -Iseconds)] odds daily FAILED"
     tg "⚠️ Capa de cuotas/valor falló hoy — los picks salen sin cuota/edge (nada más se afecta)"
     exit 1
+fi
+REMAIN=$(grep -o 'remaining=[0-9]*' "$ODDS_OUT" | tail -1 | cut -d= -f2)
+rm -f "$ODDS_OUT"
+if [ -n "${REMAIN:-}" ]; then
+    if [ "$REMAIN" -eq 0 ]; then
+        tg "🚨 The Odds API: créditos AGOTADOS (0/500 este mes). Las cuotas/edge NO se actualizan hasta el reinicio mensual del plan (o upgrade). Predicciones y dashboard siguen normales."
+    elif [ "$REMAIN" -lt 60 ]; then
+        tg "⚠️ The Odds API: quedan solo $REMAIN créditos este mes — se agotarán en ~$((REMAIN / 20)) días al ritmo actual."
+    fi
 fi
 echo "[$(date -Iseconds)] odds daily COMPLETE"
 

@@ -153,13 +153,21 @@ def _api_key() -> str:
     return key
 
 
+_REMAINING: int | None = None  # last x-requests-remaining seen this process (credit budget guard)
+
+
 def _get(path: str, **params) -> tuple[object, dict]:
+    global _REMAINING
     params = {"apiKey": _api_key(), **params}
     resp = requests.get(f"{API_BASE}{path}", params=params, timeout=30)
     resp.raise_for_status()
     remaining = resp.headers.get("x-requests-remaining")
     used = resp.headers.get("x-requests-used")
     if remaining is not None:
+        try:
+            _REMAINING = int(float(remaining))
+        except (TypeError, ValueError):
+            pass
         logger.info("odds-api credits: remaining=%s used=%s (%s)", remaining, used, path)
         print(f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] "
               f"odds-api {path}: credits remaining={remaining} used={used}")
@@ -415,7 +423,17 @@ def fetch_league(league: str, sport_key: str, engine) -> dict:
 # Alternate totals are only sold PER EVENT on this API (1 credit per event).
 # Fetch them TARGETED: only pending events fetched today, capped, so credit
 # spend stays ~<=ALT_MAX_EVENTS/day on top of the bulk fetch.
-ALT_MAX_EVENTS = 10
+# 2026-07-30 (Julian: "do 3") — the free 500/month died on Jul 25 at ~20/day:
+# cap 10→3, cups get NO alternates (their per-event calls were the waste; the
+# 2-credit league fetch keeps their main totals), and a budget guard skips ALL
+# alternates when the month's tank runs low (league fetches are the product).
+ALT_MAX_EVENTS = 3
+# Cup/tournament leagues: base cuotas only, never per-event alternates.
+NO_ALT_LEAGUES = {"worldcup", "soccer_ucl", "soccer_uel", "soccer_lgc", "soccer_lib", "soccer_sud"}
+# Below this many remaining credits, alternates are skipped for everyone.
+ALT_MIN_CREDITS = 150
+# Below this, even league fetches stop (keep a reserve for MLB tomorrow).
+FETCH_MIN_CREDITS = 10
 
 
 def fetch_alternates(league: str, sport_key: str, engine, max_events: int = ALT_MAX_EVENTS) -> dict:
@@ -871,8 +889,16 @@ def run_daily(day: date | None = None, cfg: Config | None = None) -> dict:
     engine = create_engine(cfg)
     smap = sport_map()  # free /sports probe (also the Colombia check)
     report: dict = {"day": str(day), "fetched": [], "match": {}, "value": [], "reconcile": {}}
-    for league, sport_key in smap.items():
+    # Priority order: majors first so, si el tanque muere a mitad de vuelta, lo importante
+    # ya quedó con cuota (los cups van al final y nunca piden alternates).
+    _PRIORITY = ["mlb", "nba", "nfl", "nhl", "mls", "soccer_mex", "soccer_eng", "soccer_esp"]
+    ordered = sorted(smap.items(), key=lambda kv: _PRIORITY.index(kv[0]) if kv[0] in _PRIORITY else 99)
+    for league, sport_key in ordered:
         try:
+            if _REMAINING is not None and _REMAINING <= FETCH_MIN_CREDITS:
+                logger.info("%s: SKIPPED — quedan %s créditos (reserva mínima %s)",
+                            league, _REMAINING, FETCH_MIN_CREDITS)
+                continue
             with engine.begin() as conn:
                 pending = _pending_today(conn, league, day)
             if not pending:
@@ -881,8 +907,14 @@ def run_daily(day: date | None = None, cfg: Config | None = None) -> dict:
                 continue
             report["fetched"].append(fetch_league(league, sport_key, engine))
             # Targeted alternate totals (per-event endpoint): more lines get a
-            # cuota. Self-limiting: skips events already holding >=4 lines.
-            report["fetched"].append(fetch_alternates(league, sport_key, engine))
+            # cuota. Cups nunca; y con el tanque bajo, nadie.
+            if league in NO_ALT_LEAGUES:
+                logger.info("%s: cup league — sin alternates (frugalidad)", league)
+            elif _REMAINING is not None and _REMAINING < ALT_MIN_CREDITS:
+                logger.info("%s: alternates SKIPPED — quedan %s créditos (< %s)",
+                            league, _REMAINING, ALT_MIN_CREDITS)
+            else:
+                report["fetched"].append(fetch_alternates(league, sport_key, engine))
             report["match"][league] = match_league(league, engine)
         except Exception:
             logger.exception("odds daily: league %s failed (non-fatal)", league)
