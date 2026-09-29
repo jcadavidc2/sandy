@@ -69,6 +69,8 @@ RECONCILE_OUTPUT=$($SANDY over-under reconcile --notify 2>&1)
 echo "$RECONCILE_OUTPUT" | tail -1
 
 # Step 5: Retrain ALL models
+echo "[$(date -Iseconds)] Step 4b/7: Calibrated probabilities (walk-forward back-fill of p_cal_over_*)..."
+$SANDY over-under calibrate-probs 2>&1 | tail -8 || echo "calibrate-probs FAILED (non-fatal: morning predict computes p_cal itself)"
 echo "[$(date -Iseconds)] Step 5/7: Retraining all models..."
 RUNS_OUTPUT=$($SANDY train --target runs 2>&1 | tail -2)
 GW_OUTPUT=$($SANDY train --target game_winner 2>&1 | tail -2)

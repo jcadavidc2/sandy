@@ -68,6 +68,17 @@ def predict_cmd(notify, days_ahead) -> None:
     from sandy.mls.predictor import predict_scheduled
     preds = predict_scheduled(load_config(), days_ahead=days_ahead)
     click.echo(f"mls predict: {len(preds)} matches")
+
+    # Calibrated probability columns for the rows just written (walk-forward
+    # isotonic per line — sandy/calibrate_lines.py). Non-fatal.
+    try:
+        from sandy.calibrate_lines import fill_league
+        from sandy.db import create_engine as _ce
+        _eng = _ce(load_config())
+        for _lg in ("mls",):
+            fill_league(_eng, _lg)
+    except Exception as _exc:  # noqa: BLE001
+        click.echo(f"calibrate_lines skipped: {_exc}")
     if notify:
         from sandy.mls.notifier import notify_daily
         click.echo(f"telegram sent: {notify_daily(load_config())}")

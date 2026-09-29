@@ -1,11 +1,11 @@
 """🎯 Portafolio B "Picks del Día" — the A/B experiment page (paper money).
 
-Second $100,000 paper bank that bets EVERY day on the day's ✅ accuracy picks
-(one per game, matched cuota required) using OUR RAW calibrated probabilities
-— no market shrink, plus an always-bet floor when no candidate has positive
-EV. All math in sandy/portfolio_picks.py (shared optimizer with 🎰 portfolio
-A, separate tables/bank). Layout mirrors page 4: official sheet → what-if
-simulator → ledger (with A's curve overlaid for the head-to-head).
+Second $100,000 paper bank. Since the 2026-09-28 audit B is the FLAT-STAKE
+SINGLES arm: 2% of its bank on each of the day's top ✅ Picks del Día (one per
+game, matched cuota, market no-vig on our side, ≥3 books, league gate), at
+most 5 picks, no Kelly, no parlays, no forced bets. All math in
+sandy/portfolio_picks.py (separate tables/bank). Layout mirrors page 4:
+official sheet → what-if simulator → ledger (with A's curve overlaid).
 """
 from __future__ import annotations
 
@@ -20,35 +20,39 @@ from sandy.odds import DISPLAY_TZ
 
 st.set_page_config(page_title="Sandy · Portafolio Picks", page_icon="🎯", layout="wide")
 st.title("🎯 Portafolio B — Picks del Día (dinero de papel)")
-st.caption("El experimento hermano del 🎰 Portafolio: una SEGUNDA banca de papel de $100.000 "
-           "que apuesta TODOS los días EXACTAMENTE a los 🏁 Picks del Día que tengan cuota "
-           "(el mejor 🤖 por partido), usando nuestra probabilidad cruda — sin recorte prudente y "
-           "aunque el mercado no nos dé ventaja. Mismo optimizador (Kelly fraccional Monte "
-           "Carlo, pasos de $500, tope 30% por partido), otra tesis. Las dos curvas, lado a "
-           "lado, son la prueba A/B.")
+st.caption(f"El experimento hermano del 🎰 Portafolio: una SEGUNDA banca de papel de $100.000 "
+           f"que apuesta PLANO — {P.B_FLAT_FRACTION:.0%} de su banca en cada uno de los mejores "
+           f"🏁 Picks del Día con cuota (máximo {P.B_MAX_PICKS_PER_DAY} individuales, el mejor 🤖 "
+           f"por partido), solo cuando el mercado también está de nuestro lado. Sin Kelly, sin "
+           f"combinadas, sin apuestas forzadas. Las dos curvas, lado a lado, son la prueba A/B: "
+           f"Kelly (A) contra plano (B).")
 
 with st.expander("📖 Cómo leer esta página (y en qué se diferencia del 🎰)"):
     st.markdown(f"""
 - **Nadie apuesta plata real.** Es una banca de papel independiente de $100.000.
-- **La tesis honesta de este portafolio:** apostamos los picks ✅ de nuestros modelos **aunque
-  no haya ventaja sobre el mercado**. El 🎰 Portafolio A solo apuesta cuando el mercado paga de
-  más (y con probabilidad recortada 70/30 hacia el mercado); este Portafolio B le cree **100% a
-  nuestros modelos** y usa la probabilidad cruda para decidir cuánto poner.
-- **Regla siempre-apostar:** si ningún candidato tiene valor esperado positivo ni siquiera bajo
-  nuestras propias probabilidades, igual se despliega el {P.MIN_DEPLOY_FRACTION:.0%} del
-  presupuesto del día (mínimo un tiquete de $500) en la mejor combinación disponible — "la
-  menos mala". Solo un día SIN picks ✅ con cuota queda en $0.
+- **La tesis de este portafolio (rediseñada el 28/9):** apuesta **plana** — la misma cantidad
+  ({P.B_FLAT_FRACTION:.0%} de la banca) en cada pick, solo individuales, máximo
+  {P.B_MAX_PICKS_PER_DAY} al día, los de mayor 🤖 primero. Es la forma más directa de probar
+  "más días verdes que rojos": sin combinadas que pierden casi siempre y sin tamaños Kelly que
+  crecen con probabilidades infladas. El 🎰 A es el brazo Kelly (recortado 30/70 hacia el
+  mercado, individuales y dobles).
+- **Por qué cambió:** la B original ("creerle 100% al modelo, apostar siempre, combinadas de 4")
+  quedó refutada por sus propios datos — el peso óptimo del modelo frente al mercado era ~0, el
+  64% de sus patas eran las mismas de A el mismo día, la regla siempre-apostar solo actuó 4 días
+  y las combinadas de 4 iban 0/33 desde agosto.
+- **Filtros:** mercado % ≥ 50% en nuestro lado (en contra acertábamos 44% creyendo 58%), nuestra
+  probabilidad ≥ la del mercado, ≥3 casas cotizando la línea, y ligas con ROI reciente < −5%
+  por fuera. Un día sin picks que pasen los filtros queda en $0 — a conciencia.
 - **⚠️sust. en un tiquete** = el pick exacto de Picks del Día para ese juego no tiene cuota
   en el mercado, así que B apuesta el MEJOR pick con cuota de ese mismo juego (el sustituto).
-- **Esto es un experimento, no una recomendación.** Apostar sin ventaja de mercado pierde plata
-  a largo plazo *si el mercado tiene razón*; gana *si nuestros modelos ven algo que el mercado
-  no*. **Espera rachas perdedoras** — posiblemente largas. Para eso existe.
+- **Esto es un experimento, no una recomendación.** Con cuotas ~1.5–2.0 y apuesta plana, un
+  día es verde cuando aciertan más picks de los que fallan; la curva sube solo si nuestros
+  picks ✅ aciertan de verdad más de lo que la cuota exige.
 - **Lo único que importa:** comparar la curva de esta banca contra la del 🎰 Portafolio A
-  (abajo van superpuestas). Si B supera a A sostenidamente, nuestras probabilidades crudas
-  valen más que la prudencia; si A gana, el recorte prudente estaba protegiendo la plata.
-- **Un pick por partido:** por cada juego entra solo el pick de mayor valor esperado con
-  nuestra probabilidad (prob × cuota − 1). Picks sin cuota casada (corners, BTTS, 1X de NHL)
-  no pueden apostarse.
+  (abajo van superpuestas). Si B sube más parejo, el tamaño plano protege mejor; si A gana,
+  Kelly recortado está sacando más de la misma ventaja.
+- **Un pick por partido:** por cada juego entra solo el pick de mayor 🤖 (el de Picks del Día).
+  Picks sin cuota casada (corners, BTTS, 1X de NHL) no pueden apostarse.
 """)
 
 day = datetime.now(DISPLAY_TZ).date()
@@ -99,7 +103,8 @@ o1.metric("Banca disponible (B)", f"${bank:,.0f}",
                "tiquetes abiertos está descontado.")
 o2.metric("Presupuesto del día", f"${PA.default_budget(bank_basis):,.0f}",
           help=f"Misma regla del 🎰: {PA.BUDGET_FRACTION:.0%} de la banca con que amaneció el "
-               f"día (${bank_basis:,.0f}), en pasos de $500.")
+               f"día (${bank_basis:,.0f}), en pasos de $500 — {P.B_MAX_PICKS_PER_DAY} picks × "
+               f"{P.B_FLAT_FRACTION:.0%} de la banca.")
 if not persisted_today.empty:
     o3.metric("Apostado hoy (oficial)", f"${persisted_today['stake'].sum():,.0f}")
     o4.metric("Tiquetes", f"{len(persisted_today)}")
@@ -152,35 +157,31 @@ c1, c2, c3 = st.columns([2, 1.6, 1.2])
 max_b = int(max(PA.floor500(bank_basis), PA.STEP))
 budget = c1.slider("Presupuesto del día ($)", 0, max_b,
                    int(min(PA.default_budget(bank_basis), max_b)), step=int(PA.STEP),
-                   help="Cuánto se permitiría apostar HOY como máximo en esta simulación. "
-                        "El oficial usa el 30% de la banca B. Moverlo NO guarda nada.")
-risk = c2.radio("Riesgo", list(PA.RISKS), index=2, horizontal=True,
-                help="Fracción de Kelly: Conservador = ⅛, Balanceado = ¼, "
-                     "Agresivo = ½ (el oficial).")
+                   help=f"Cuánto se permitiría apostar HOY como máximo en esta simulación. "
+                        f"El oficial usa el {PA.BUDGET_FRACTION:.0%} de la banca B. Moverlo NO guarda nada.")
+risk = PA.DEFAULT_RISK  # B stakes FLAT — the Kelly risk dial does not apply here
+c2.metric("Apuesta por pick (plana)", f"${P.flat_stake(bank_basis):,.0f}",
+          help=f"{P.B_FLAT_FRACTION:.0%} de la banca B redondeado a $500 (mínimo $500). "
+               "La misma cantidad en cada pick — B no usa Kelly.")
 c3.metric("Presupuesto oficial", f"${PA.default_budget(bank_basis):,.0f}",
-          help="El techo real del día: 30% de la banca B.")
+          help=f"El techo real del día: {PA.BUDGET_FRACTION:.0%} de la banca B.")
 
 res = _whatif_B(day, float(budget), risk)
 
 if not res.get("tickets"):
-    st.info("🙅 $0 apostado en esta simulación — no hay picks ✅ con cuota hoy (o el "
-            "presupuesto no alcanza para la apuesta mínima de $500). La regla "
-            "siempre-apostar solo aplica cuando existe al menos un candidato apostable.")
+    st.info("🙅 $0 apostado en esta simulación — hoy ningún pick ✅ con cuota pasa los filtros "
+            "(mercado a favor, ≥3 casas, liga habilitada) o el presupuesto no alcanza para la "
+            "apuesta mínima de $500. Un día sin apostar es una decisión, no una falla.")
 else:
-    if res.get("forzado"):
-        st.warning(f"⚠️ **Despliegue forzado (regla siempre-apostar):** hoy NINGÚN candidato "
-                   f"tiene valor esperado positivo ni bajo nuestras propias probabilidades. "
-                   f"El optimizador Kelly habría apostado $0; el experimento exige poner el "
-                   f"{P.MIN_DEPLOY_FRACTION:.0%} del presupuesto en la mejor combinación "
-                   f"disponible. Día con expectativa negativa asumida a conciencia.")
     s = res["summary"] or {}
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Apostado hoy", f"${res['staked']:,.0f}",
-              help="Suma de los tiquetes ($500 mínimo por paso, tope 30% por partido).")
+              help=f"Individuales planas de ${res.get('unidad', 0):,.0f} cada una "
+                   f"(máximo {P.B_MAX_PICKS_PER_DAY} picks, dentro del presupuesto).")
     k2.metric("Ganancia esperada (modelo)", f"${s.get('expected_profit', 0):+,.0f}",
-              help="Promedio de miles de días simulados usando nuestra probabilidad CRUDA "
-                   "(sin recorte). Si el mercado tiene razón, el valor real es peor — ese "
-                   "es exactamente el experimento.")
+              help="Promedio de miles de días simulados usando nuestra probabilidad calibrada. "
+                   "Si el mercado tiene razón, el valor real es ~0 — por eso lo que decide es la "
+                   "curva, no este número.")
     k3.metric("P(día verde)", f"{s.get('p_green', 0):.0%}",
               help="Probabilidad de terminar el día ganando plata, según nuestros modelos.")
     k4.metric("Peor 5% del día", f"${s.get('p5', 0):+,.0f}",
@@ -214,14 +215,13 @@ else:
                                                            "$500)."),
             "Prob (modelo)": st.column_config.NumberColumn(
                 "Prob (modelo)", format="percent",
-                help="Probabilidad de que el tiquete gane según nuestra probabilidad CRUDA "
-                     "— la única que usa este portafolio (sin mezcla con el mercado)."),
+                help="Probabilidad de que el pick gane según nuestra probabilidad calibrada "
+                     "(el tamaño de la apuesta NO depende de ella: B apuesta plano)."),
             "Ganaría": st.column_config.NumberColumn("Ganaría", format="$%.0f",
                                                      help="Stake × cuota si acierta."),
             "EV (modelo)": st.column_config.NumberColumn(
                 "EV (modelo)", format="$%.0f",
-                help="Ganancia promedio esperada del tiquete si nuestros modelos tienen "
-                     "razón. Puede ser NEGATIVA en días de despliegue forzado."),
+                help="Ganancia promedio esperada del pick si nuestros modelos tienen razón."),
         })
 
 # ------------------------------------------------------------------ history --
@@ -247,8 +247,8 @@ else:
     h2.metric("P&L acumulado", f"${pnl_total:+,.0f}",
               help="Ganancia/pérdida total de los días ya liquidados de B.")
     h3.metric("Días verdes", f"{verdes}/{len(settled)}",
-              help="Días liquidados que terminaron en ganancia. En B espera menos que en A: "
-                   "aquí se apuesta también sin ventaja.")
+              help="Días liquidados que terminaron en ganancia — la métrica que B existe para "
+                   "mejorar (apuesta plana en individuales).")
     h4.metric("ROI sobre lo apostado", f"{(pnl_total / staked_total * 100):+.1f}%"
               if staked_total else "—",
               help="P&L ÷ total apostado en días liquidados de B.")
@@ -264,9 +264,9 @@ else:
                           axis=1)
     st.line_chart(curva, height=300)
     st.caption("Las dos bancas de papel superpuestas — arrancan ambas en $100.000 (en fechas "
-               "distintas). Si 🎯 B se despega hacia arriba, nuestras probabilidades crudas "
-               "le ganan a la prudencia del 🎰 A; si se hunde, el recorte prudente y el "
-               "filtro de valor estaban haciendo su trabajo.")
+               "distintas). Hasta el 28/9 las dos apostaban casi lo mismo (64% de patas en común); "
+               "desde entonces 🎯 B es apuesta plana en individuales y 🎰 A es Kelly recortado con "
+               "dobles — la comparación empieza ahí.")
 
     st.markdown("**P&L por día (banca B)**")
     tabla = pd.DataFrame({
@@ -311,6 +311,6 @@ else:
                      })
 
 st.caption("⚖️ Dinero 100% de papel — un experimento A/B de análisis, no una invitación a "
-           "apostar. Este portafolio apuesta A PROPÓSITO sin exigir ventaja de mercado; su "
-           "hermano prudente vive en 🎰 Portafolio. Liquidación diaria automática con los "
+           "apostar. Este portafolio apuesta PLANO en individuales con el mercado a favor; su "
+           "hermano Kelly vive en 🎰 Portafolio. Liquidación diaria automática con los "
            "resultados reales; partido aplazado = tiquete anulado y stake devuelto.")

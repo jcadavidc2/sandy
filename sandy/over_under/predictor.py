@@ -66,6 +66,18 @@ def predict_all_games(
     predictions: list[OverUnderPrediction] = []
     effective_date = game_date if game_date is not None else date.today()
 
+    # Empirical error distribution of the model's OWN past errors, strictly
+    # before today (walk-forward). Loaded once per run; None → p_cal stays NULL.
+    residuals = None
+    try:
+        from sandy.db import create_engine as _ce
+        from sandy.over_under.calibration import ensure_columns, load_residuals
+        _eng = _ce(config)
+        ensure_columns(_eng)
+        residuals = load_residuals(_eng, before=effective_date)
+    except Exception as exc:  # noqa: BLE001 — calibration is additive, never blocks predictions
+        logger.warning(f"Calibration residuals unavailable ({exc}); p_cal will be NULL")
+
     for game in schedule:
         home = game.home_team_code.strip().upper()
         away = game.away_team_code.strip().upper()
@@ -177,6 +189,10 @@ def predict_all_games(
         from sandy.over_under.volatility import predict_sigma
         sigma = predict_sigma(feature_vector, config) if feature_vector else 3.3
         p_over = compute_over_under_probabilities(total_expected, residual_std=sigma)
+        p_cal = None
+        if residuals is not None:
+            from sandy.over_under.calibration import calibrated_probabilities
+            p_cal = calibrated_probabilities(total_expected, residuals)
 
         now_utc = datetime.now(timezone.utc)
 
@@ -198,6 +214,7 @@ def predict_all_games(
             home_expected_runs=home_runs,
             away_expected_runs=away_runs,
             sigma_used=sigma,
+            p_cal=p_cal,
         )
         predictions.append(prediction)
 
@@ -213,6 +230,8 @@ def persist_predictions(engine: Engine, predictions: list[OverUnderPrediction]) 
     if not predictions:
         return 0
 
+    from sandy.over_under.calibration import ensure_columns
+    ensure_columns(engine)
     count = 0
     with engine.begin() as conn:
         for pred in predictions:
@@ -232,7 +251,9 @@ def persist_predictions(engine: Engine, predictions: list[OverUnderPrediction]) 
                         home_starter_era, away_starter_era, ballpark_id,
                         home_trailing15_rpg, away_trailing15_rpg,
                         pitcher_fallback,
-                        home_expected_runs, away_expected_runs, sigma_used
+                        home_expected_runs, away_expected_runs, sigma_used,
+                        p_cal_over_5_5, p_cal_over_6_5, p_cal_over_7_5, p_cal_over_8_5,
+                        p_cal_over_9_5, p_cal_over_10_5, p_cal_over_11_5
                     ) VALUES (
                         :game_pk, :game_date, :home_team_code, :away_team_code,
                         :predicted_at_utc,
@@ -242,7 +263,9 @@ def persist_predictions(engine: Engine, predictions: list[OverUnderPrediction]) 
                         :home_starter_era, :away_starter_era, :ballpark_id,
                         :home_trailing15_rpg, :away_trailing15_rpg,
                         :pitcher_fallback,
-                        :home_expected_runs, :away_expected_runs, :sigma_used
+                        :home_expected_runs, :away_expected_runs, :sigma_used,
+                        :p_cal_over_5_5, :p_cal_over_6_5, :p_cal_over_7_5, :p_cal_over_8_5,
+                        :p_cal_over_9_5, :p_cal_over_10_5, :p_cal_over_11_5
                     )
                     ON CONFLICT (game_pk, game_date) DO UPDATE SET
                         predicted_at_utc = EXCLUDED.predicted_at_utc,
@@ -262,7 +285,14 @@ def persist_predictions(engine: Engine, predictions: list[OverUnderPrediction]) 
                         pitcher_fallback = EXCLUDED.pitcher_fallback,
                         home_expected_runs = EXCLUDED.home_expected_runs,
                         away_expected_runs = EXCLUDED.away_expected_runs,
-                        sigma_used = EXCLUDED.sigma_used
+                        sigma_used = EXCLUDED.sigma_used,
+                        p_cal_over_5_5 = EXCLUDED.p_cal_over_5_5,
+                        p_cal_over_6_5 = EXCLUDED.p_cal_over_6_5,
+                        p_cal_over_7_5 = EXCLUDED.p_cal_over_7_5,
+                        p_cal_over_8_5 = EXCLUDED.p_cal_over_8_5,
+                        p_cal_over_9_5 = EXCLUDED.p_cal_over_9_5,
+                        p_cal_over_10_5 = EXCLUDED.p_cal_over_10_5,
+                        p_cal_over_11_5 = EXCLUDED.p_cal_over_11_5
                 """),
                 {
                     "game_pk": pred.game_pk,
@@ -287,6 +317,8 @@ def persist_predictions(engine: Engine, predictions: list[OverUnderPrediction]) 
                     "home_expected_runs": pred.home_expected_runs,
                     "away_expected_runs": pred.away_expected_runs,
                     "sigma_used": pred.sigma_used,
+                    **{f"p_cal_over_{str(t).replace('.', '_')}": (pred.p_cal or {}).get(t)
+                       for t in STANDARD_THRESHOLDS},
                 },
             )
             count += 1

@@ -82,11 +82,14 @@ def format_morning_digest(
     lines.append("")
 
     # Sort predictions by probability descending (highest confidence first) — O5.5
-    sorted_preds = sorted(predictions, key=lambda p: p.p_over.get(5.5, 0.0), reverse=True)
+    def _probs(p):  # calibrated when available (see over_under/calibration.py), raw otherwise
+        return p.p_cal if getattr(p, "p_cal", None) else p.p_over
+
+    sorted_preds = sorted(predictions, key=lambda p: _probs(p).get(5.5, 0.0), reverse=True)
 
     for pred in sorted_preds:
-        p_over_6_5 = pred.p_over.get(6.5, 0.0)
-        p_over_5_5 = pred.p_over.get(5.5, 0.0)
+        p_over_6_5 = _probs(pred).get(6.5, 0.0)
+        p_over_5_5 = _probs(pred).get(5.5, 0.0)
         # Convert UTC to PST (UTC-7)
         from datetime import timedelta
         pst_time = pred.game_time_utc - timedelta(hours=7)

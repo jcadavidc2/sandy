@@ -79,9 +79,21 @@ if ! nice -n 10 .venv/bin/python -m sandy.portfolio_picks settle >> logs/odds.lo
 fi
 
 echo "[$(date -Iseconds)] restarting dashboard (fresh artifacts for the webpage)..."
-PID=$(ss -tlnp 2>/dev/null | grep 8502 | grep -oP 'pid=\K[0-9]+' | head -1 || true)
-[ -n "${PID}" ] && kill "$PID" && sleep 3
-setsid nohup ./scripts/dashboard.sh >> logs/dashboard.log 2>&1 &
-sleep 10
+# 2026-09-29: the old one-liner never actually killed the process (pid 3184 from the
+# Sep-20 boot kept serving stale modules for 9 days while pages re-read new code →
+# AttributeError on the portfolio pages). Kill by port with fallbacks, WAIT for the
+# port to free up, escalate to -9, and verify a NEW pid is listening.
+OLD_PID=$(ss -tlnp 2>/dev/null | grep ':8502 ' | grep -oP 'pid=\K[0-9]+' | head -1 || true)
+[ -z "${OLD_PID}" ] && OLD_PID=$(pgrep -f "streamlit run sandy/dashboard" | head -1 || true)
+if [ -n "${OLD_PID}" ]; then
+    kill "$OLD_PID" 2>/dev/null || true
+    for _i in 1 2 3 4 5; do sleep 2; ss -tln 2>/dev/null | grep -q ':8502 ' || break; done
+    ss -tln 2>/dev/null | grep -q ':8502 ' && { kill -9 "$OLD_PID" 2>/dev/null || true; sleep 3; }
+fi
+setsid nohup ./scripts/dashboard.sh >> logs/dashboard.log 2>&1 < /dev/null &
+sleep 12
+NEW_PID=$(ss -tlnp 2>/dev/null | grep ':8502 ' | grep -oP 'pid=\K[0-9]+' | head -1 || true)
+echo "[$(date -Iseconds)] dashboard pid ${OLD_PID:-none} → ${NEW_PID:-none}"
+[ -n "${NEW_PID}" ] && [ "${NEW_PID}" != "${OLD_PID:-x}" ] || tg "⚠️ Dashboard: el reinicio diario no reemplazó el proceso (pid ${OLD_PID:-?}); el sitio puede servir código viejo"
 curl -sf -o /dev/null http://localhost:8502/ || { tg "❌ Dashboard no volvió tras el reinicio diario"; exit 1; }
 echo "[$(date -Iseconds)] metas extra + dashboard refresh COMPLETE"

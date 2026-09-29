@@ -1,12 +1,13 @@
 """🎰 Portafolio diario — paper-money BetPlay simulation (the user does NOT bet).
 
-Shows TODAY's recommended ticket sheet (persisted daily at 14:15 UTC with the
+Shows TODAY's recommended ticket sheet (persisted daily at 13:40 UTC with the
 default budget/risk), what-if controls that recompute the optimizer on the fly,
 the Monte-Carlo day summary under BOTH the prudent (edge-shrunk) and raw-model
 assumptions, a 30/90-day bankroll projection, and the full historical ledger.
-All the math lives in sandy/portfolio.py (see its module doc for assumptions:
-edge shrinkage 0.7/0.3, cross-game independence for parlays, fractional Kelly,
-30% per-game cap, void = refund).
+All the math lives in sandy/portfolio.py (see its module doc for the regime set
+by the 2026-09-28 audit: edge shrinkage 0.3/0.7, market-side agreement, edge
+window 5-20pp, ≥3 books, league gate, singles + doubles, ¼-Kelly, 2%/3%-of-bank
+ticket/game caps, 10% daily budget, median price).
 """
 from __future__ import annotations
 
@@ -24,11 +25,13 @@ st.caption("Simulación de una cuenta BetPlay con plata de papel — NADIE apues
            "Cada día el optimizador toma los picks con valor (ver 💰 Valor), arma tiquetes "
            "(individuales y combinadas de partidos DISTINTOS) y reparte el presupuesto en "
            "pasos de $500 (mínimo BetPlay) maximizando el crecimiento de la banca "
-           "(Kelly fraccional por Monte Carlo). Tope de exposición por partido: 30% del "
-           "presupuesto del día.")
-st.caption("🎯 El Portafolio B (picks) vive en **🎯 Portafolio Picks** — mismas reglas de "
-           "optimización, otra tesis: apuesta los picks ✅ del día con nuestra probabilidad "
-           "cruda, incluso sin ventaja de mercado. Las dos curvas son la prueba A/B.")
+           f"(Kelly fraccional por Monte Carlo, {P.DEFAULT_RISK} = ¼ Kelly). Topes: "
+           f"{P.TICKET_CAP_FRACTION:.0%} de la banca por tiquete, {P.GAME_CAP_FRACTION:.0%} por "
+           f"partido, máximo {P.MAX_PARLAY_LEGS} patas por combinada, presupuesto "
+           f"{P.BUDGET_FRACTION:.0%} de la banca al día.")
+st.caption("🎯 El Portafolio B (picks) vive en **🎯 Portafolio Picks** — el brazo de apuesta "
+           "PLANA: individuales a 2% de la banca sobre los Picks del Día con el mercado a favor. "
+           "Las dos curvas son la prueba A/B (Kelly vs plano).")
 
 with st.expander("📖 Cómo leer esta página"):
     st.markdown("""
@@ -36,9 +39,14 @@ with st.expander("📖 Cómo leer esta página"):
   reales de casa de apuestas, si nuestros picks generarían dinero de verdad.
 - **¿Qué es el *edge*?** Es cuánta más probabilidad le damos nosotros a un pick que el mercado.
   Si nosotros decimos 69% y las casas dicen 61%, hay 8 puntos de ventaja.
-- **Somos prudentes a propósito:** para decidir cuánto apostar recortamos nuestra ventaja un 30%
-  (mezclamos 70% nuestra probabilidad + 30% la del mercado), por si nuestros modelos pecan de
-  optimistas justo donde más discrepan del mercado.
+- **Somos prudentes a propósito:** para decidir cuánto apostar recortamos nuestra ventaja un 70%
+  (mezclamos 30% nuestra probabilidad + 70% la del mercado). La auditoría del 28/9 mostró que,
+  sobre nuestros propios picks, el mercado acertaba más que nosotros: el peso óptimo del modelo
+  era ~0, y el 70/30 anterior apostaba grande sobre ruido.
+- **Filtros nuevos (28/9):** el mercado tiene que estar de nuestro lado (mercado % ≥ 50%), el edge
+  debe estar entre 5 y 20 puntos (menos es ruido entre casas, más es error nuestro), la línea la
+  deben cotizar ≥3 casas, y una liga con ROI reciente por debajo de −5% queda por fuera hasta
+  ganárselo. Combinadas de máximo 2 patas: las de 4 iban 0/48 desde agosto.
 - **Por eso NO verás los picks "seguros":** un favorito obvio paga tan poquito que no deja
   ganancia. El valor está donde el mercado subestima — ahí es donde se gana plata a largo plazo.
 - **Se pierde ~3 de cada 10 veces y está BIEN.** Apostamos con ventaja, no con certeza.
@@ -153,15 +161,15 @@ c1, c2, c3 = st.columns([2, 1.6, 1.2])
 max_b = int(max(P.floor500(bank_basis), P.STEP))
 budget = c1.slider("Presupuesto del día ($)", 0, max_b,
                    int(min(P.default_budget(bank_basis), max_b)), step=int(P.STEP),
-                   help="Cuánto se permitiría apostar HOY como máximo en esta simulación. "
-                        "El oficial usa el 30% de la banca. Moverlo NO guarda nada.")
-risk = c2.radio("Riesgo", list(P.RISKS), index=2, horizontal=True,
-                help="Qué tan agresivo es el tamaño de las apuestas (fracción de Kelly): "
-                     "Conservador = ⅛, Balanceado = ¼, Agresivo = ½ (el oficial), Agresivo = ½. "
+                   help=f"Cuánto se permitiría apostar HOY como máximo en esta simulación. "
+                        f"El oficial usa el {P.BUDGET_FRACTION:.0%} de la banca. Moverlo NO guarda nada.")
+risk = c2.radio("Riesgo", list(P.RISKS), index=list(P.RISKS).index(P.DEFAULT_RISK), horizontal=True,
+                help=f"Qué tan agresivo es el tamaño de las apuestas (fracción de Kelly): "
+                     f"Conservador = ⅛, Balanceado = ¼, Agresivo = ½. El oficial es {P.DEFAULT_RISK}. "
                      "Más riesgo = más ganancia esperada pero bajones más feos.")
 c3.metric("Presupuesto oficial", f"${P.default_budget(bank_basis):,.0f}",
-          help="El techo real del día: 30% de la banca. El slider de la izquierda es solo "
-               "para explorar escenarios.")
+          help=f"El techo real del día: {P.BUDGET_FRACTION:.0%} de la banca. El slider de la "
+               "izquierda es solo para explorar escenarios.")
 
 res = _whatif(day, float(budget), risk)
 
@@ -174,14 +182,15 @@ else:
     m = s.get("modelo", {})
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Apostado hoy", f"${res['staked']:,.0f}",
-              help="Suma de los tiquetes. Puede ser menos que el presupuesto: el optimizador "
-                   "solo apuesta lo que mejora el crecimiento esperado de la banca (y el tope "
-                   "del 30% por partido limita la concentración).")
+              help=f"Suma de los tiquetes. Puede ser menos que el presupuesto: el optimizador "
+                   f"solo apuesta lo que mejora el crecimiento esperado de la banca (y los topes "
+                   f"de {P.TICKET_CAP_FRACTION:.0%} por tiquete / {P.GAME_CAP_FRACTION:.0%} por "
+                   "partido de la banca limitan la concentración).")
     k2.metric("Ganancia esperada (prudente)", f"${s.get('expected_profit', 0):+,.0f}",
               delta=f"si el modelo acierta: ${m.get('expected_profit', 0):+,.0f}",
-              help="Promedio de 20.000 días simulados usando la probabilidad PRUDENTE "
-                   "(70% nuestra + 30% mercado). El deltica muestra el escenario si nuestros "
-                   "modelos tienen toda la razón.")
+              help=f"Promedio de 20.000 días simulados usando la probabilidad PRUDENTE "
+                   f"({P.SHRINK_MODEL_WEIGHT:.0%} nuestra + {1 - P.SHRINK_MODEL_WEIGHT:.0%} mercado). "
+                   "El deltica muestra el escenario si nuestros modelos tienen toda la razón.")
     k3.metric("P(día verde)", f"{s.get('p_green', 0):.0%}",
               delta=f"modelo: {m.get('p_green', 0):.0%}",
               help="Probabilidad de terminar el día ganando plata. Puede ser <50% aunque el "

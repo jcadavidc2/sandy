@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS odds.value_log (
     side       TEXT  NOT NULL CHECK (side IN ('over', 'under', 'home', 'away', 'home_or_draw')),
     line       REAL,                    -- NULL for h2h/winner
     prob       REAL  NOT NULL,          -- OUR side prob (base model, calibrated) — NOT the 🤖 meta
-    cuota      REAL  NOT NULL,          -- best decimal price across books at log time
+    cuota      REAL  NOT NULL,          -- MEDIAN decimal price across books at log time (2026-09-28;
+                                        -- was best-of-N, which inflated paper ROI by ~1.75pp)
     edge       REAL  NOT NULL,          -- prob - consensus implied_novig
     ev         REAL,                    -- prob*(cuota-1) - (1-prob)
     stake      REAL  NOT NULL DEFAULT 1.0,
@@ -87,3 +88,7 @@ ALTER TABLE odds.value_log DROP CONSTRAINT IF EXISTS value_log_side_check;
 ALTER TABLE odds.value_log DROP CONSTRAINT IF EXISTS ck_value_log_side;
 ALTER TABLE odds.value_log ADD CONSTRAINT ck_value_log_side
     CHECK (side IN ('over', 'under', 'home', 'away', 'home_or_draw'));
+
+-- 2026-09-28: books behind the price + the best price (audit only; P&L uses the median).
+ALTER TABLE odds.value_log ADD COLUMN IF NOT EXISTS n_books INTEGER;
+ALTER TABLE odds.value_log ADD COLUMN IF NOT EXISTS cuota_max REAL;

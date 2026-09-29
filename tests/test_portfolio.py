@@ -10,9 +10,14 @@ import numpy as np
 import pytest
 
 from sandy.portfolio import (
+    BUDGET_FRACTION,
+    DEFAULT_RISK,
     GAME_CAP_FRACTION,
+    MAX_PARLAY_LEGS,
+    RISKS,
     SHRINK_MODEL_WEIGHT,
     STEP,
+    TICKET_CAP_FRACTION,
     _optimize,
     enumerate_tickets,
     settle_ticket,
@@ -89,14 +94,26 @@ def _run(cands, budget, bank=100_000.0, risk="Balanceado", seed=42, n_sims=5000)
     return tickets, stakes, pnl, pnl_raw
 
 
-def test_single_candidate_respects_budget_and_game_cap():
+def test_single_candidate_respects_budget_and_bank_caps():
     cands = [_cand(0, cuota=1.86, prob=0.65)]  # clear positive edge
-    budget = 10_000.0
-    _, stakes, _, _ = _run(cands, budget)
+    budget, bank = 10_000.0, 100_000.0
+    _, stakes, _, _ = _run(cands, budget, bank=bank)
     assert stakes.sum() > 0                                    # it does bet
     assert stakes.sum() <= budget + 1e-9
-    assert stakes.sum() <= GAME_CAP_FRACTION * budget + 1e-9   # one game → cap binds
+    # caps are fractions of the BANK (audit 2026-09-28): one single → ticket cap binds
+    assert stakes.max() <= TICKET_CAP_FRACTION * bank + 1e-9
+    assert stakes.sum() <= GAME_CAP_FRACTION * bank + 1e-9     # one game → game cap
     assert all(s % STEP == 0 for s in stakes)                  # $500 granularity
+
+
+def test_regime_constants_match_the_audit():
+    """The 2026-09-28 regime, pinned so a casual edit cannot silently re-open the
+    holes the audit closed (see the module docstring for the numbers)."""
+    assert BUDGET_FRACTION == 0.10
+    assert MAX_PARLAY_LEGS == 2
+    assert SHRINK_MODEL_WEIGHT <= 0.30
+    assert RISKS[DEFAULT_RISK] <= 0.25
+    assert TICKET_CAP_FRACTION <= 0.02 and GAME_CAP_FRACTION <= 0.03
 
 
 def test_negative_edge_bets_zero():
@@ -122,7 +139,24 @@ def test_multi_candidate_never_exceeds_budget_or_per_game_cap():
     for t, s in zip(tickets, stakes):
         for g in t["games"]:
             expo[g] = expo.get(g, 0.0) + s
-    assert all(v <= GAME_CAP_FRACTION * budget + 1e-9 for v in expo.values())
+    assert all(v <= GAME_CAP_FRACTION * 100_000.0 + 1e-9 for v in expo.values())
+    assert all(s <= TICKET_CAP_FRACTION * 100_000.0 + 1e-9 for s in stakes)
+
+
+def test_topup_respects_global_ticket_cap_and_prior_exposure():
+    """A top-up pass counts the tickets and per-game exposure already placed today."""
+    from sandy.portfolio import MAX_TICKETS_PER_DAY
+    cands = [_cand(0, 1.90, 0.66), _cand(1, 1.86, 0.65)]
+    tickets = enumerate_tickets(cands)
+    # daily ticket cap already reached → nothing new can be opened
+    stakes, _, _ = _optimize(cands, tickets, 10_000.0, 100_000.0, "Balanceado", 3000, 1,
+                             n_open0=MAX_TICKETS_PER_DAY)
+    assert stakes.sum() == 0.0
+    # game 0 already carries the full per-game cap → only game 1 can be funded
+    stakes, _, _ = _optimize(cands, tickets, 10_000.0, 100_000.0, "Balanceado", 3000, 1,
+                             expo0={cands[0]["game"]: GAME_CAP_FRACTION * 100_000.0})
+    funded_games = {g for t, s in zip(tickets, stakes) if s > 0 for g in t["games"]}
+    assert cands[0]["game"] not in funded_games and cands[1]["game"] in funded_games
 
 
 def test_fixed_seed_is_deterministic():
@@ -135,9 +169,12 @@ def test_fixed_seed_is_deterministic():
 
 def test_tickets_are_singles_plus_cross_game_parlays():
     cands = [_cand(i, 1.9, 0.6) for i in range(3)]
-    tickets = enumerate_tickets(cands)
+    tickets = enumerate_tickets(cands)           # default MAX_PARLAY_LEGS = 2
     sizes = sorted(len(t["legs_idx"]) for t in tickets)
-    assert sizes == [1, 1, 1, 2, 2, 2, 3]        # 3 singles, 3 doubles, 1 triple
+    assert sizes == [1, 1, 1, 2, 2, 2]           # 3 singles, 3 doubles, NO triple
+    assert max(sizes) <= MAX_PARLAY_LEGS
+    tickets3 = enumerate_tickets(cands, max_legs=3)
+    assert sorted(len(t["legs_idx"]) for t in tickets3) == [1, 1, 1, 2, 2, 2, 3]
     for t in tickets:                            # no repeated game inside a ticket
         assert len(set(t["games"])) == len(t["games"])
         # parlay cuota/prob are products of the legs (independence assumption)

@@ -35,6 +35,10 @@ class OverUnderPrediction:
     home_expected_runs: float = 0.0
     away_expected_runs: float = 0.0
     sigma_used: float = 3.3
+    # Calibrated P(over L) from the empirical CDF of past errors (see
+    # over_under/calibration.py); None when too few prior games. This is what the
+    # value/portfolio/meta layers consume; p_over keeps the raw Normal for audit.
+    p_cal: dict[float, float] | None = None
 
 
 @dataclass(frozen=True)

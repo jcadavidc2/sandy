@@ -25,6 +25,10 @@ BASE_TMPL = "https://site.api.espn.com/apis/site/v2/sports/{sport}/{code}"
 BASE = BASE_TMPL.format(sport="soccer", code="usa.1")  # MLS default
 MAX_RPS = 1.0
 RETRIES = 3
+# None = let urllib send its default ("Python-urllib/3.x"), which ESPN accepts.
+# Verified 2026-09-28 (Akamai edge): no-UA / Python-urllib / python-requests / curl → 200;
+# "sandy/1.0", "sandy-bot", "Mozilla/5.0 (compatible; …)" and a Chrome UA → 403.
+USER_AGENTS: tuple[str | None, ...] = (None, "Python-urllib/3.11", "python-requests/2.32")
 
 
 _orig_getaddrinfo = socket.getaddrinfo
@@ -55,10 +59,20 @@ class EspnClient:
         last_err: Exception | None = None
         for attempt in range(self._retries):
             self._throttle()
+            # User-Agent rotation: ESPN's edge started answering HTTP 403 to the
+            # custom "sandy/1.0" UA on 2026-08-05 (and to browser UAs without the
+            # rest of a browser's headers) while the plain urllib default keeps
+            # getting 200 — verified 2026-09-28. First attempt = urllib default;
+            # later attempts rotate through USER_AGENTS so a future block on one
+            # string degrades to a retry instead of killing every vertical.
+            ua = USER_AGENTS[attempt % len(USER_AGENTS)]
+            headers = {"Accept": "application/json"}
+            if ua:
+                headers["User-Agent"] = ua
             try:
                 socket.getaddrinfo = _ipv4_getaddrinfo  # force IPv4 for this call
                 try:
-                    req = urllib.request.Request(url, headers={"User-Agent": "sandy/1.0"})
+                    req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=20) as resp:
                         return json.loads(resp.read().decode())
                 finally:
@@ -66,7 +80,8 @@ class EspnClient:
             except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
                 last_err = e
                 backoff = 2.0 * (attempt + 1)
-                logger.warning("ESPN request failed (attempt %s): %s — retrying in %.0fs", attempt + 1, e, backoff)
+                logger.warning("ESPN request failed (attempt %s, UA=%r): %s — retrying in %.0fs",
+                               attempt + 1, ua or "urllib-default", e, backoff)
                 time.sleep(backoff)
         raise RuntimeError(f"ESPN request failed after {self._retries} attempts: {url}: {last_err}")
 

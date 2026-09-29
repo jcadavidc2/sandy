@@ -48,6 +48,7 @@ import logging
 import os
 import re
 import statistics
+from typing import NamedTuple
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -616,19 +617,35 @@ def pick_side(kind: str, p: float) -> str:
     return "over" if p >= 0.5 else "under"
 
 
-def _agg(rows) -> tuple[float, float | None, int] | None:
-    """(best price, median implied_novig, n books) over latest-per-book rows."""
+class OddsHit(NamedTuple):
+    """Aggregated market for one (game, market, line, side) over the latest row per book."""
+    price: float          # the price a bettor at ONE book gets: MEDIAN across books (PRICE_RULE)
+    novig: float | None   # consensus fair probability: median implied_novig across books
+    n: int                # number of books quoting this exact line + side
+    best: float           # best price across books — display/audit only, never for P&L
+
+
+# 2026-09-28 audit: paper P&L was computed at the BEST of up to 24 EU books, which
+# inflated ROI by ~1.75pp vs the median book (a BetPlay bettor gets one price, not
+# the best of 24). "median" is the honest default; "best" reproduces the old numbers.
+PRICE_RULE = "median"
+
+
+def _agg(rows) -> OddsHit | None:
+    """OddsHit(price=median, novig=median no-vig, n=books, best=max) over latest-per-book rows."""
     if not rows:
         return None
-    best = max(r.price for r in rows)
+    prices = sorted(float(r.price) for r in rows)
+    best = prices[-1]
+    price = float(statistics.median(prices)) if PRICE_RULE == "median" else best
     novig = [r.implied_novig for r in rows if r.implied_novig is not None]
-    return best, (statistics.median(novig) if novig else None), len(rows)
+    return OddsHit(price, (float(statistics.median(novig)) if novig else None), len(rows), best)
 
 
 def best_odds_for(league: str, home: str, away: str, market: str,
                   line: float | None, side: str, day: date,
-                  engine=None) -> tuple[float, float | None, int] | None:
-    """Best decimal price across books + consensus (median) implied_novig for
+                  engine=None) -> OddsHit | None:
+    """OddsHit (median price, consensus no-vig, n books, best price) for
     one matched game/market/side. `market` is the API market ('totals'/'h2h');
     `line` the totals point (None for h2h). Returns None when no odds stored."""
     engine = engine or create_engine(load_config())
@@ -646,9 +663,9 @@ def best_odds_for(league: str, home: str, away: str, market: str,
 
 
 def odds_index(league: str, start: date, end: date, engine=None
-               ) -> dict[tuple, tuple[float, float | None, int]]:
+               ) -> dict[tuple, OddsHit]:
     """Bulk lookup for the dashboard: (match_date, home, away, api_market,
-    point, side) → (best price, median implied_novig, n books). One query."""
+    point, side) → OddsHit(median price, median implied_novig, n books, best). One query."""
     engine = engine or create_engine(load_config())
     with engine.begin() as conn:
         rows = conn.execute(text("""
@@ -667,20 +684,27 @@ def odds_index(league: str, start: date, end: date, engine=None
     return {k: _agg(v) for k, v in groups.items()}
 
 
-def value_stats(prob: float, hit: tuple[float, float | None, int] | None
-                ) -> dict[str, float | None]:
-    """cuota / mercado % / edge / EV for a pick. `prob` is the pick's own
-    base-model calibrated SIDE probability (NOT the 🤖 meta P(correct))."""
-    out = {"cuota": None, "mercado %": None, "edge": None, "EV": None}
+def value_stats(prob: float, hit: OddsHit | None) -> dict[str, float | None]:
+    """cuota (median price) / mercado % / edge / EV / libros for a pick. `prob` is
+    the pick's own base-model calibrated SIDE probability (NOT the 🤖 meta P(correct))."""
+    out: dict[str, float | None] = {"cuota": None, "mercado %": None, "edge": None, "EV": None, "libros": None}
     if not hit:
         return out
-    cuota, novig, _n = hit
+    cuota, novig = float(hit.price), hit.novig
     out["cuota"] = round(cuota, 2)
     out["EV"] = round(prob * (cuota - 1) - (1 - prob), 4)
+    out["libros"] = int(hit.n)
     if novig is not None:
-        out["mercado %"] = round(novig, 4)
-        out["edge"] = round(prob - novig, 4)
+        out["mercado %"] = round(float(novig), 4)
+        out["edge"] = round(prob - float(novig), 4)
     return out
+
+
+def ensure_value_log_columns(engine) -> None:
+    """Idempotent: n_books (books behind the price) + cuota_max (best price, audit only)."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE odds.value_log ADD COLUMN IF NOT EXISTS n_books INTEGER"))
+        conn.execute(text("ALTER TABLE odds.value_log ADD COLUMN IF NOT EXISTS cuota_max REAL"))
 
 
 # ---------------------------------------------------------------- value log --
@@ -691,6 +715,7 @@ def log_value_picks(day: date | None = None, cfg: Config | None = None,
     cfg = cfg or load_config()
     day = day or datetime.now(DISPLAY_TZ).date()
     engine = create_engine(cfg)
+    ensure_value_log_columns(engine)
     found: list[dict] = []
     for league in SPECS:
         idx = odds_index(league, day, day, engine)
@@ -731,12 +756,14 @@ def log_value_picks(day: date | None = None, cfg: Config | None = None,
                     continue  # only meta-approved (✅) picks are candidates
                 api_market, pt = mapping
                 side = pick_side(kind, p)
-                st = value_stats(prob, idx.get((day, home, away, api_market, pt, side)))
+                hit = idx.get((day, home, away, api_market, pt, side))
+                st = value_stats(prob, hit)
                 if st["edge"] is None or st["edge"] < min_edge:
                     continue
                 rec = {"date": day, "league": league, "home": home, "away": away,
                        "market": market, "side": side, "line": pt, "prob": round(prob, 4),
-                       "cuota": st["cuota"], "edge": st["edge"], "ev": st["EV"]}
+                       "cuota": st["cuota"], "edge": st["edge"], "ev": st["EV"],
+                       "n_books": int(hit.n), "cuota_max": round(float(hit.best), 2)}
                 with engine.begin() as conn:
                     dup = conn.execute(text("""
                         SELECT 1 FROM odds.value_log
@@ -749,13 +776,13 @@ def log_value_picks(day: date | None = None, cfg: Config | None = None,
                         conn.execute(text("""
                             INSERT INTO odds.value_log
                                 (date, league, home, away, market, side, line, prob,
-                                 cuota, edge, ev, stake)
+                                 cuota, edge, ev, stake, n_books, cuota_max)
                             VALUES (:date, :league, :home, :away, :market, :side, :line,
-                                    :prob, :cuota, :edge, :ev, 1.0)
+                                    :prob, :cuota, :edge, :ev, 1.0, :n_books, :cuota_max)
                         """), rec)
                 found.append(rec)
-                logger.info("VALUE pick %s %s vs %s %s %s: prob=%.2f cuota=%.2f edge=%.3f",
-                            league, home, away, market, side, prob, st["cuota"], st["edge"])
+                logger.info("VALUE pick %s %s vs %s %s %s: prob=%.2f cuota=%.2f (max %.2f, %d libros) edge=%.3f",
+                            league, home, away, market, side, prob, st["cuota"], hit.best, hit.n, st["edge"])
     return found
 
 
@@ -867,6 +894,33 @@ def reconcile_value_log(cfg: Config | None = None) -> dict:
     return {"settled": settled, "open": still_open}
 
 
+def live_accuracy_report(engine=None, days: int = 30, min_n: int = 20) -> str:
+    """Honest drift monitor for the daily Telegram: per league, realized accuracy
+    of the approved value picks settled in the last `days` days vs the mean
+    probability we PROMISED, plus flat ROI at the logged price. 🟢 within 3pp of
+    the promise, 🟡 within 8pp, 🔴 beyond (the 2026-09-28 audit found 10-21pp
+    gaps in every soccer league and a 30-day accuracy that had decayed to 52%)."""
+    engine = engine or create_engine(load_config())
+    with engine.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT league, count(*) AS n, sum((result = 'win')::int) AS hits,
+                   avg(prob) AS promised, sum(units) AS units
+            FROM odds.value_log
+            WHERE result IN ('win', 'lose') AND date >= CURRENT_DATE - :days
+            GROUP BY league HAVING count(*) >= :min_n ORDER BY n DESC
+        """), {"days": days, "min_n": min_n}).fetchall()
+    if not rows:
+        return f"📏 Acierto real {days}d: sin ligas con ≥{min_n} picks liquidados."
+    out = [f"📏 Acierto REAL de los picks ✅ con cuota (últimos {days} días) vs lo prometido:"]
+    for r in rows:
+        acc = r.hits / r.n
+        gap = float(r.promised) - acc
+        light = "🟢" if gap <= 0.03 else ("🟡" if gap <= 0.08 else "🔴")
+        out.append(f"{light} {r.league}: {acc:.0%} ({r.hits}/{r.n}) · prometido {float(r.promised):.0%} "
+                   f"· ROI {float(r.units) / r.n:+.1%}")
+    return "\n".join(out)
+
+
 def roi_frame(cfg: Config | None = None):
     """Settled value_log rows for the 💰 page (date-ordered)."""
     import pandas as pd
@@ -918,6 +972,14 @@ def run_daily(day: date | None = None, cfg: Config | None = None) -> dict:
             report["match"][league] = match_league(league, engine)
         except Exception:
             logger.exception("odds daily: league %s failed (non-fatal)", league)
+    # Calibrated probability columns for today's fresh predictions (defensive: each
+    # vertical's predict already fills them; this guarantees no candidate is scored
+    # on a NULL calibrated column if a nightly ran on old code). Non-fatal.
+    try:
+        from sandy.calibrate_lines import fill_all
+        report["calibrated"] = fill_all(engine)
+    except Exception:
+        logger.exception("calibrate_lines fill failed (non-fatal)")
     try:
         report["value"] = log_value_picks(day, cfg)
     except Exception:
@@ -926,6 +988,22 @@ def run_daily(day: date | None = None, cfg: Config | None = None) -> dict:
         report["reconcile"] = reconcile_value_log(cfg)
     except Exception:
         logger.exception("reconcile step failed (non-fatal)")
+    # 2026-09-29: the value log and the paper portfolios are ONE chain. Every odds pass
+    # settles both banks and then builds (first pass) or TOPS UP (later passes) the
+    # day's tickets, so picks logged by a later run — e.g. the 13:33 pass that used to
+    # orphan 27% of all value picks, or today's NHL picks — get bet instead of ignored.
+    # Non-fatal and idempotent: a pass with no new qualifying picks changes nothing.
+    import importlib
+    report["portfolios"] = {}
+    for name, mod in (("A", "sandy.portfolio"), ("B", "sandy.portfolio_picks")):
+        try:
+            m = importlib.import_module(mod)
+            m.settle_portfolio(cfg)
+            rep = m.build_portfolio(day=day, cfg=cfg, persist=True, topup=True)
+            report["portfolios"][name] = {k: v for k, v in rep.items() if k != "tickets"}
+            report["portfolios"][name]["n_tickets"] = len(rep.get("tickets", []))
+        except Exception:
+            logger.exception("portfolio %s settle/build failed (non-fatal)", name)
     return report
 
 

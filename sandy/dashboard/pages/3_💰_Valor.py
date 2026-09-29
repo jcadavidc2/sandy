@@ -1,6 +1,7 @@
 """💰 Valor — our picks vs the betting market (TheOddsAPI, analytical only).
 
-For every ✅ pick with matched odds: cuota (best decimal price across books),
+For every ✅ pick with matched odds: cuota (MEDIAN decimal price across books — what one
+real book pays; the best-of-N price is kept only as cuota_max for audit),
 mercado % (consensus no-vig implied prob, median across books),
 edge = prob − mercado %, EV = prob·(cuota−1) − (1−prob).
 
@@ -30,9 +31,14 @@ with st.expander("📖 Cómo leer esta página"):
 - **¿Qué es el *edge*?** Cuánta más probabilidad le damos nosotros a un pick que el mercado.
   Nosotros 69%, las casas 61% → 8 puntos de ventaja. Con edge positivo sostenido se gana
   plata a largo plazo; sin edge, la cuota es "justa" y la casa gana por su margen.
-- **Edge prudente**: el mismo edge pero recortado 30% (le creemos 70% a nuestro modelo y 30%
-  al mercado), por si somos optimistas justo donde más discrepamos. Es el que usa el
-  🎰 Portafolio para decidir cuánto apostar.
+- **Edge prudente**: el mismo edge pero recortado fuerte (le creemos 30% a nuestro modelo y 70%
+  al mercado — la auditoría del 28/9 mostró que sobre nuestros propios picks el peso óptimo del
+  modelo era ~0). Es el que usa el 🎰 Portafolio para decidir cuánto apostar.
+- **La cuota es la MEDIANA entre casas**, no la mejor de 24: es lo que paga una casa real.
+  `libros` = cuántas casas cotizan exactamente esa línea; con menos de 3 el "consenso" es una
+  sola casa blanda y el edge suele ser ficticio (esos picks no entran al portafolio).
+- **El mercado tiene que estar de nuestro lado** (mercado % ≥ 50%): cuando el mercado favorece el
+  otro lado, nuestros picks acertaron 44% creyendo 58%.
 - **Por eso los picks "seguros" no aparecen**: un favorito obvio paga tan poquito que no deja
   ganancia — el valor está donde el mercado subestima, no donde todo el mundo acierta.
 - **EV** = ganancia esperada por cada unidad apostada. EV +0.15 significa que apostando 100

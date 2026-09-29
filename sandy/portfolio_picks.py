@@ -1,51 +1,43 @@
-"""🎯 Portafolio B "Picks del Día" — PAPER-money portfolio over the ✅ picks.
+"""🎯 Portafolio B "Picks del Día" — PAPER-money FLAT-STAKE singles over the ✅ picks.
 
-The user's explicit A/B experiment, running FOREVER beside the 🎰 value
-portfolio (sandy/portfolio.py). Same optimizer machinery, opposite thesis:
+REDESIGNED 2026-09-28 after the portfolio audit. The original B ("bet our raw
+probabilities, always bet, parlays up to 4 legs") was falsified by its own data:
+  * the optimal weight on our model vs the market on our own picks was ZERO
+    (log-loss grid over 577 settled value picks) — "raw probabilities" only
+    meant bigger stakes on the same coin flips;
+  * 63.6% of A's legs were also in B the same day (daily P&L correlation 0.80):
+    two banks carrying one bet, no information gained;
+  * the always-bet floor fired on 4 days ($10,000) and proved nothing;
+  * 4-leg tickets since Aug 5 went 0/33 (believed 14%).
+
+B is now the structurally DIFFERENT arm the A/B needs — the "more green days"
+thesis, tested cleanly against A's Kelly arm:
 
   PORTFOLIO A (🎰 sandy/portfolio.py)          PORTFOLIO B (🎯 this module)
   ------------------------------------         ------------------------------------
-  bets only odds.value_log picks               bets the day's ✅ ACCURACY picks
-  (positive market edge required)              even when NO positive edge exists
-  stakes with SHRUNK probabilities             stakes with OUR RAW calibrated
-  p_bet = 0.7·ours + 0.3·market                probabilities — "bet our beliefs"
-  (prudent, market-deferent arm)               (confident, model-trusting arm)
-  no-value day → $0 staked                     ALWAYS-BET floor (see below)
-  odds.portfolio_log / odds.bankroll           odds.portfolio_picks_log /
-                                               odds.bankroll_picks (own $100,000)
+  bets odds.value_log picks (edge 5–20pp)      bets the day's ✅ Picks del Día
+  Kelly-shrunk sizing (E[log] optimizer)       FLAT stake: B_FLAT_FRACTION of bank
+  singles + doubles                            SINGLES ONLY
+  market must agree on the side                market must agree on the side
+  odds.portfolio_log / odds.bankroll           odds.portfolio_picks_log / odds.bankroll_picks
 
-The two bankroll curves ARE the experiment: if raw model beliefs beat prudent
-market deference over months, B's curve says so. Expect losing stretches — B
-deliberately bets picks the market prices against us.
-
-Rules (decided with the user — mirror sandy/portfolio.py unless stated):
-  * CANDIDATES  — every ✅ meta-approved pick of the day across ALL leagues
-    that has a matched cuota (TheOddsAPI). Picks without an odds feed (btts,
-    corners, NHL 1X) are excluded by necessity — no price, no bet.
-    MAX ONE candidate PER GAME: per game we pre-select the pick with the
-    highest expected value under OUR probability (p·cuota − 1). Intra-game
-    legs are heavily correlated; one leg per match keeps parlays honest.
-  * PROBABILITIES — OUR calibrated side probability RAW, no market shrink
-    (p_bet = prob). This is the point of the experiment; portfolio A already
-    covers the prudent blend.
-  * SIZING      — identical machinery to A (imported, not copied): singles +
-    cross-game parlays ≤ 7 legs, Monte-Carlo E[log wealth], greedy $500
-    coordinate ascent, Agresivo ½-Kelly default, budget = 30% of B's OWN
-    bankroll, ≤ 30%-of-budget exposure per game.
-  * ALWAYS-BET (the user's core thesis) — if the Kelly optimizer allocates $0
-    (every candidate negative-EV under our probs), we FORCE a minimum
-    deployment: MIN_DEPLOY_FRACTION (10%) of the day's budget, floored to
-    $500 steps (min one $500 ticket), placed step-by-step on the ticket mix
-    with the highest expected log outcome — the least-bad best combination.
-    Days with NO candidates at all genuinely stake $0.
-  * SETTLING    — legs are NOT value_log rows (most have no positive edge),
-    so each leg re-grades straight from the prediction tables via
-    sandy.betmeta._correct — the same source odds.reconcile_value_log uses.
-    Grading rule is A's settle_ticket (imported): all win → stake·cuota, any
-    lose → 0; a void leg (postponed/moved game) drops out and the parlay is
-    re-priced over the remaining legs — only an all-void ticket refunds.
-  * STORAGE     — odds.portfolio_picks_log / odds.bankroll_picks, same shapes
-    as A's tables but fully separate; A's rows are never touched.
+Rules:
+  * CANDIDATES  — every ✅ meta-approved pick of the day with a matched cuota,
+    ONE per game (highest 🤖, EV tie-break — exactly the 🏁 Picks del Día list),
+    that also passes the audit filters: market no-vig on OUR side ≥ 0.50
+    (market-disagreeing picks hit 44% vs 58% believed), our calibrated
+    probability ≥ market + 3pp (edge ≥ B_MIN_EDGE), ≥ B_MIN_BOOKS books quoting the
+    exact line, and the league not blocked by portfolio.league_gate().
+  * SIZING      — flat B_FLAT_FRACTION (2%) of the bank per pick, floored to
+    $500, at most B_MAX_PICKS_PER_DAY picks (highest 🤖 first), never above the
+    day's budget (BUDGET_FRACTION of the bank). No Kelly, no parlays, no
+    forced deployment: a day without qualifying picks stakes $0.
+  * PRICE       — cuota = MEDIAN price across books (what one real book pays),
+    not the best of 24 (which inflated paper P&L by ~1.75pp of ROI).
+  * SETTLING    — unchanged: legs re-grade straight from the prediction tables
+    via sandy.betmeta._correct; A's settle_ticket rule (void leg drops out,
+    all-void refunds).
+  * STORAGE     — unchanged tables, fully separate from A.
 
 CLI: python -m sandy.portfolio_picks build|settle|report
 (logs 'portfolio picks build COMPLETE' / 'portfolio picks settle COMPLETE'
@@ -66,14 +58,12 @@ from sandy.betmeta import SPECS, _correct, market_threshold, score_candidate
 from sandy.config import Config, load_config
 from sandy.db import create_engine
 from sandy.odds import DISPLAY_TZ, market_to_api, odds_index, pick_side
-# Shared portfolio math — imported from A, never copy-pasted. B only adds its
-# own candidate pool, the always-bet floor and its own tables.
+# Shared portfolio plumbing — imported from A, never copy-pasted. B only adds its
+# own candidate pool, the flat allocator and its own tables.
 from sandy.portfolio import (
     BUDGET_FRACTION,
     DEFAULT_RISK,
-    GAME_CAP_FRACTION,
     INITIAL_BANK,
-    MAX_TICKETS_PER_DAY,
     N_SIMS,
     RISKS,
     STEP,
@@ -81,30 +71,25 @@ from sandy.portfolio import (
     _dist_summary,
     _league_title,
     _market_label,
-    _optimize,
     _pick_label,
     default_budget,
     enumerate_tickets,
     floor500,
+    league_gate,
     settle_ticket,
+    started_games,
 )
 
 logger = logging.getLogger(__name__)
 
-# ALWAYS-BET floor: when the Kelly optimizer would stake $0 (no candidate has
-# positive EV under our raw probabilities), portfolio B still deploys this
-# fraction of the day's budget (floored to $500 steps, min one $500 ticket)
-# on the least-bad best ticket mix — the experiment's core thesis is that our
-# models deserve to be bet EVERY day they produce ✅ picks.
-MIN_DEPLOY_FRACTION = 0.10
-
-# B prices with RAW model probabilities (no market shrink — its thesis), so parlay
-# probability = Π p_i compounds the tails' optimism. Calibration audit 2026-07-14
-# over all settled tickets: ≤4 legs predicted-vs-real is honest (even conservative),
-# but 5+ legs believed 26.6% and hit 9.1% (1/11, ROI −50%). Cap where calibration
-# breaks. Portfolio A keeps MAX_PARLAY_LEGS=7 — its 70/30 shrink showed NO
-# overconfidence at any size (it is the control for this experiment).
-B_MAX_PARLAY_LEGS = 4
+B_FLAT_FRACTION = 0.02          # flat stake per pick, as a fraction of B's bank (floored to $500)
+B_MAX_PICKS_PER_DAY = 5         # highest-🤖 picks first; 5 × 2% = the 10% daily budget
+B_REQUIRE_MARKET_SIDE = True    # market no-vig for our side must be ≥ 0.50
+B_MIN_EDGE = 0.03               # our (calibrated) probability ≥ market + 3pp — the pool that replayed
+                                # to 32 green / 23 red days as calibrated same-side singles
+B_MIN_BOOKS = 2                 # a second book must quote the exact line (a real second opinion);
+                                # A demands 3 because it SIZES on the edge — B stakes flat, and the
+                                # flat replay at median price lost volume, not accuracy, at ≥3
 
 
 # ------------------------------------------------------------------- schema --
@@ -121,7 +106,7 @@ def best_per_game(cands: list[dict]) -> list[dict]:
     finals: the pick with the highest 🤖 meta score wins the game (tie-break by
     raw EV). So B's pool is literally the Picks del Día list, restricted to the
     picks that have a matched cuota. Pure + unit-tested. Result sorted by
-    descending ev (the parlay pool takes the head)."""
+    descending ev."""
     def _key(c):
         return (c.get("meta") if c.get("meta") is not None else -1.0, c["ev"])
     best: dict[tuple, dict] = {}
@@ -133,18 +118,26 @@ def best_per_game(cands: list[dict]) -> list[dict]:
 
 
 def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[dict]:
-    """The day's ✅ accuracy picks with a matched cuota → one per game.
+    """The day's ✅ accuracy picks with a matched cuota → one per game, filtered.
 
-    Scan is the same as odds.log_value_picks (pending games, meta-approved
-    picks, matched TheOddsAPI odds) WITHOUT the positive-edge filter: any ✅
-    pick with a price is a candidate, even when the market disagrees with us.
-    Probabilities stay RAW (p_bet = prob — no market shrink, by design)."""
+    Scan mirrors odds.log_value_picks (pending games, meta-approved picks,
+    matched TheOddsAPI odds). Filters (audit 2026-09-28): market side
+    agreement, edge ≥ B_MIN_EDGE, ≥ MIN_BOOKS books, league gate. Skips are
+    logged with their reason."""
     cfg = cfg or load_config()
-    from sandy.portfolio import started_games
     _started = started_games(engine, day)
+    gate = league_gate(engine, day)
     out: list[dict] = []
     game_best: dict[tuple, tuple] = {}   # (league,home,away) -> (best 🤖, market)
+    skipped: dict[str, int] = {}
+
+    def _skip(reason: str) -> None:
+        skipped[reason] = skipped.get(reason, 0) + 1
+
     for league in SPECS:
+        if gate.get(league, {}).get("blocked"):
+            _skip(f"liga_bloqueada:{league}")
+            continue
         idx = odds_index(league, day, day, engine)
         if not idx:
             continue
@@ -194,9 +187,17 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
                 hit = idx.get((day, home, away, api_market, pt, side))
                 if not hit:
                     continue  # no matched price for this pick → can't be bet
-                cuota, novig, _n = hit
-                cuota = float(cuota)
-                ev = prob * cuota - 1.0           # raw-model EV per $1 (may be < 0!)
+                cuota, novig, n_books = float(hit.price), hit.novig, int(hit.n)
+                if novig is None:
+                    _skip("sin_consenso"); continue
+                novig = float(novig)
+                if B_REQUIRE_MARKET_SIDE and novig < 0.5:
+                    _skip("mercado_en_contra"); continue
+                if prob - novig < B_MIN_EDGE:
+                    _skip("bajo_el_mercado"); continue
+                if n_books < B_MIN_BOOKS:
+                    _skip("pocas_casas"); continue
+                ev = prob * cuota - 1.0           # model EV per $1 at the median price
                 fp = rd.get("first_pitch_utc")
                 out.append({
                     "date": str(day), "game": (league, home, away),
@@ -207,12 +208,13 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
                     "line": None if pt is None else float(pt),
                     "mercado": _market_label(league, market),
                     "pick": _pick_label(league, market, side, line, home, away),
-                    "cuota": round(cuota, 2),
-                    "prob": round(prob, 4),        # raw calibrated side prob
-                    "meta": None if mp is None else round(float(mp), 4),  # 🤖 (selection key)
-                    "p_bet": round(prob, 4),       # == prob: NO shrink (B's thesis)
-                    "mercado_pct": None if novig is None else round(float(novig), 4),
-                    "edge": None if novig is None else round(prob - float(novig), 4),
+                    "cuota": round(cuota, 2),      # MEDIAN price across books
+                    "prob": round(prob, 4),        # calibrated side prob
+                    "p_bet": round(prob, 4),       # == prob (no shrink) — enumerate_tickets contract
+                    "meta": round(float(mp), 4),   # 🤖 (selection key)
+                    "mercado_pct": round(novig, 4),
+                    "n_books": n_books,
+                    "edge": round(prob - novig, 4),
                     "ev": round(ev, 4),
                 })
     # ⚠️sust. — the selected candidate is NOT the game's overall best-🤖 pick
@@ -222,68 +224,52 @@ def candidates_for_picks(day: date, engine, cfg: Config | None = None) -> list[d
         c["sustituto"] = bool(bm and bm[1] != c["market"])
         if c["sustituto"]:
             c["pick"] = f"{c['pick']} ⚠️sust."
-    return best_per_game(out)
+    picks = best_per_game(out)
+    if skipped:
+        logger.info("picks candidates %s: %d kept, skipped %s", day, len(picks),
+                    dict(sorted(skipped.items())))
+    return picks
 
 
-# ---------------------------------------------------------------- optimizer --
-def _forced_deploy(cands: list[dict], tickets: list[dict], forced_budget: float,
-                   cap: float, bank: float, risk: str, n_sims: int, seed: int
-                   ) -> tuple[np.ndarray, np.ndarray]:
-    """ALWAYS-BET allocator: spend `forced_budget` in $500 steps, each step on
-    the ticket with the HIGHEST expected log wealth (even when every option
-    lowers it — least-bad best). Same MC construction as portfolio._optimize
-    (deterministic seed, per-game exposure cap) minus the must-improve gate."""
+# ---------------------------------------------------------------- allocator --
+def flat_stake(bank: float) -> float:
+    """B's unit: B_FLAT_FRACTION of the bank, floored to $500 steps, min one step."""
+    return max(floor500(B_FLAT_FRACTION * bank), STEP)
+
+
+def allocate_flat(cands: list[dict], bank: float, budget: float,
+                  max_picks: int = B_MAX_PICKS_PER_DAY) -> np.ndarray:
+    """FLAT allocation: the same stake on each of the top-🤖 candidates (EV
+    tie-break), at most `max_picks` picks (default B_MAX_PICKS_PER_DAY; a top-up
+    passes the picks still allowed today), never above `budget`.
+    Returns stakes aligned with `cands` (0 for unfunded picks). Pure + unit-tested."""
+    stakes = np.zeros(len(cands))
+    if not cands or budget < STEP or max_picks <= 0:
+        return stakes
+    unit = flat_stake(bank)
+    order = sorted(range(len(cands)),
+                   key=lambda i: (-(cands[i].get("meta") if cands[i].get("meta") is not None else -1.0),
+                                  -cands[i]["ev"]))
+    spent, n = 0.0, 0
+    for i in order:
+        if n >= max_picks or spent + unit > budget + 1e-9:
+            break
+        stakes[i] = unit
+        spent += unit
+        n += 1
+    return stakes
+
+
+def _simulate(cands: list[dict], stakes: np.ndarray, n_sims: int, seed: int) -> np.ndarray:
+    """P&L distribution of the flat singles under the candidates' own probs."""
     rng = np.random.default_rng(seed)
     U = rng.random((n_sims, len(cands)))
-    wins = U < np.array([c["prob"] for c in cands])  # raw probs — B's thesis
-    V = max(bank * RISKS[risk], 1.0)
-    pay = [t["cuota"] * wins[:, list(t["legs_idx"])].all(axis=1) - 1.0
-           for t in tickets]
-    stakes = np.zeros(len(tickets))
+    wins = U < np.array([c["prob"] for c in cands])
     pnl = np.zeros(n_sims)
-    expo: dict[tuple, float] = {}
-    spent = 0.0
-    n_open = 0
-    while spent + STEP <= forced_budget + 1e-9:
-        best_i, best_u = None, -np.inf
-        for i, t in enumerate(tickets):
-            if stakes[i] == 0.0 and n_open >= MAX_TICKETS_PER_DAY:
-                continue  # ticket cap (same as the shared optimizer)
-            if any(expo.get(g, 0.0) + STEP > cap + 1e-9 for g in t["games"]):
-                continue  # per-game exposure cap still applies
-            u = float(np.log(np.maximum(V + pnl + STEP * pay[i], 1e-9)).mean())
-            if u > best_u:
-                best_i, best_u = i, u
-        if best_i is None:
-            break
-        if stakes[best_i] == 0.0:
-            n_open += 1
-        stakes[best_i] += STEP
-        pnl += STEP * pay[best_i]
-        for g in tickets[best_i]["games"]:
-            expo[g] = expo.get(g, 0.0) + STEP
-        spent += STEP
-    return stakes, pnl
-
-
-def allocate_day(cands: list[dict], tickets: list[dict], budget: float,
-                 bank: float, risk: str, n_sims: int, seed: int
-                 ) -> tuple[np.ndarray, np.ndarray, bool]:
-    """Kelly allocation with the ALWAYS-BET floor. Returns (stakes, pnl, forced).
-
-    First the shared greedy optimizer (with p_bet == prob the 'prudente' and
-    'modelo' P&L distributions coincide — B has ONE probability regime). If it
-    stakes $0 while candidates exist and the budget allows a minimum bet, the
-    forced deployment kicks in (MIN_DEPLOY_FRACTION of the budget)."""
-    if not cands or not tickets or budget < STEP:
-        return np.zeros(len(tickets)), np.zeros(1), False
-    stakes, pnl, _pnl_raw = _optimize(cands, tickets, budget, bank, risk, n_sims, seed)
-    if stakes.sum() > 0:
-        return stakes, pnl, False
-    forced_budget = max(floor500(MIN_DEPLOY_FRACTION * budget), STEP)
-    stakes, pnl = _forced_deploy(cands, tickets, forced_budget,
-                                 GAME_CAP_FRACTION * budget, bank, risk, n_sims, seed)
-    return stakes, pnl, bool(stakes.sum() > 0)
+    for i, s in enumerate(stakes):
+        if s > 0:
+            pnl += s * (cands[i]["cuota"] * wins[:, i] - 1.0)
+    return pnl
 
 
 # ----------------------------------------------------------------- bankroll --
@@ -305,14 +291,39 @@ def available_bank(engine=None, before: date | None = None) -> float:
 
 
 # -------------------------------------------------------------------- build --
+def _materialize_singles(cands: list[dict], tickets: list[dict], stakes: np.ndarray,
+                         first_id: int = 1) -> list[dict]:
+    """Funded flat singles → persisted/display shape, highest 🤖 first."""
+    out = []
+    for t, s in zip(tickets, stakes):
+        if s <= 0:
+            continue
+        legs = [{k: v for k, v in cands[i].items() if k not in ("game", "p_bet")}
+                for i in t["legs_idx"]]
+        out.append({
+            "legs": legs, "n_legs": len(legs),
+            "cuota": round(t["cuota"], 4),
+            "prob": round(t["prob"], 4),      # calibrated model prob of the single
+            "stake": float(s),
+            "ev": round(float(s) * t["ev"], 2),
+        })
+    out.sort(key=lambda x: (-(x["legs"][0].get("meta") or 0.0), -x["ev"]))
+    for i, t in enumerate(out, start=first_id):
+        t["ticket_id"] = i
+    return out
+
+
 def build_portfolio(day: date | None = None, budget: float | None = None,
                     risk: str = DEFAULT_RISK, persist: bool = True,
                     force: bool = False, n_sims: int = N_SIMS,
-                    cfg: Config | None = None) -> dict:
-    """Build (and optionally persist) the day's 🎯 picks portfolio.
+                    cfg: Config | None = None, topup: bool = False) -> dict:
+    """Build (and optionally persist) the day's 🎯 flat-stake picks portfolio.
 
-    persist=False → pure what-if recompute for the dashboard (deterministic
-    seed, so default budget+risk reproduces the persisted portfolio)."""
+    `risk` is accepted for interface compatibility with A / the dashboard but
+    does not change anything: B stakes flat. persist=False → pure what-if
+    recompute (deterministic, reproduces the persisted sheet with default controls).
+    topup=True → if the day is already built, ADD flat singles for qualifying picks
+    on games not yet bet today (within the remaining picks/budget) instead of skipping."""
     cfg = cfg or load_config()
     day = day or datetime.now(DISPLAY_TZ).date()
     engine = create_engine(cfg)
@@ -327,6 +338,8 @@ def build_portfolio(day: date | None = None, budget: float | None = None,
                 "SELECT 1 FROM odds.portfolio_picks_log WHERE date = :d LIMIT 1"
             ), {"d": day}).fetchone()
         if built:
+            if topup:
+                return _topup_picks(day, engine, cfg, n_sims)
             logger.info("portfolio picks %s: already built — skipping (idempotent)", day)
             return {"date": str(day), "skipped": "already_built"}
 
@@ -335,36 +348,21 @@ def build_portfolio(day: date | None = None, budget: float | None = None,
     cands = candidates_for_picks(day, engine, cfg)
     result: dict = {"date": str(day), "bank": round(bank, 2), "budget": budget,
                     "risk": risk, "n_candidates": len(cands), "tickets": [],
-                    "staked": 0.0, "forzado": False, "summary": None, "persisted": False}
+                    "staked": 0.0, "forzado": False, "summary": None, "persisted": False,
+                    "unidad": flat_stake(bank)}
 
     if cands and budget >= STEP:
-        tickets = enumerate_tickets(cands, max_legs=B_MAX_PARLAY_LEGS)
+        tickets = enumerate_tickets(cands, max_legs=1)     # singles only, aligned with cands
         seed = int(day.strftime("%Y%m%d"))
-        stakes, pnl, forced = allocate_day(cands, tickets, budget, bank, risk, n_sims, seed)
-        result["forzado"] = forced
-        out = []
-        for t, s in zip(tickets, stakes):
-            if s <= 0:
-                continue
-            legs = [{k: v for k, v in cands[i].items() if k not in ("game", "p_bet")}
-                    for i in t["legs_idx"]]
-            out.append({
-                "legs": legs, "n_legs": len(legs),
-                "cuota": round(t["cuota"], 4),
-                "prob": round(t["prob"], 4),      # raw-model ticket prob (Π legs)
-                "stake": float(s),
-                "ev": round(float(s) * t["ev"], 2),
-            })
-        out.sort(key=lambda x: (-x["stake"], -x["ev"]))
-        for i, t in enumerate(out, start=1):
-            t["ticket_id"] = i
+        stakes = allocate_flat(cands, bank, budget)
+        out = _materialize_singles(cands, tickets, stakes)
         staked = float(sum(t["stake"] for t in out))
         result["tickets"] = out
         result["staked"] = staked
         if staked > 0:
-            result["summary"] = _dist_summary(pnl)
+            result["summary"] = _dist_summary(_simulate(cands, stakes, n_sims, seed))
     if not result["tickets"]:
-        result["motivo"] = ("sin picks ✅ con cuota hoy" if not cands
+        result["motivo"] = ("sin picks ✅ con cuota que pasen los filtros hoy" if not cands
                             else "presupuesto menor a la apuesta mínima")
         logger.info("portfolio picks %s: $0 staked (%s)", day, result["motivo"])
 
@@ -384,13 +382,78 @@ def build_portfolio(day: date | None = None, budget: float | None = None,
                     INSERT INTO odds.bankroll_picks (date, start_bank, staked)
                     VALUES (:d, :b, :s)
                 """), {"d": day, "b": bank, "s": result["staked"]})
-            else:  # $0 day (no candidates): logged AND settled on the spot
+            else:  # $0 day: logged AND settled on the spot
                 conn.execute(text("""
                     INSERT INTO odds.bankroll_picks
                         (date, start_bank, staked, returned, end_bank, settled_at)
                     VALUES (:d, :b, 0, 0, :b, now())
                 """), {"d": day, "b": bank})
         result["persisted"] = True
+    return result
+
+
+def _topup_picks(day: date, engine, cfg: Config, n_sims: int) -> dict:
+    """ADD flat singles to an already-built day for qualifying picks that appeared
+    since the build (games not yet bet), within the day's remaining budget and the
+    remaining B_MAX_PICKS_PER_DAY slots. Existing tickets are never touched."""
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            "SELECT ticket_id, legs, stake FROM odds.portfolio_picks_log WHERE date = :d"),
+            {"d": day}).fetchall()
+        bk = conn.execute(text(
+            "SELECT start_bank, staked FROM odds.bankroll_picks WHERE date = :d"), {"d": day}).fetchone()
+    existing_games: set = set()
+    staked_so_far, max_tid = 0.0, 0
+    for r in rows:
+        legs = r.legs if isinstance(r.legs, list) else json.loads(r.legs)
+        for l in legs:
+            existing_games.add((l.get("liga"), (l.get("home") or "").strip(), (l.get("away") or "").strip()))
+        staked_so_far += float(r.stake)
+        max_tid = max(max_tid, int(r.ticket_id))
+    bank = float(bk.start_bank) if bk is not None else available_bank(engine, before=day)
+    budget_total = default_budget(bank)
+    remaining = floor500(budget_total - staked_so_far)
+    slots = B_MAX_PICKS_PER_DAY - len(rows)
+    result: dict = {"date": str(day), "topup": True, "bank": round(bank, 2),
+                    "budget": budget_total, "budget_restante": remaining, "tickets": [],
+                    "staked": 0.0, "forzado": False, "summary": None, "persisted": False,
+                    "unidad": flat_stake(bank), "tickets_previos": len(rows)}
+    if remaining < STEP or slots <= 0:
+        result["motivo"] = "cupo del día completo"
+        return result
+    cands = [c for c in candidates_for_picks(day, engine, cfg) if c["game"] not in existing_games]
+    result["n_candidates"] = len(cands)
+    if not cands:
+        result["motivo"] = "sin picks nuevos que pasen los filtros"
+        return result
+    tickets = enumerate_tickets(cands, max_legs=1)
+    stakes = allocate_flat(cands, bank, remaining, max_picks=slots)
+    out = _materialize_singles(cands, tickets, stakes, first_id=max_tid + 1)
+    if not out:
+        result["motivo"] = "presupuesto restante menor a la unidad"
+        return result
+    staked = float(sum(t["stake"] for t in out))
+    with engine.begin() as conn:
+        for t in out:
+            conn.execute(text("""
+                INSERT INTO odds.portfolio_picks_log
+                    (date, ticket_id, legs, ticket_cuota, ticket_prob, stake)
+                VALUES (:d, :tid, :legs, :cuota, :prob, :stake)
+            """), {"d": day, "tid": t["ticket_id"], "legs": json.dumps(t["legs"]),
+                   "cuota": t["cuota"], "prob": t["prob"], "stake": t["stake"]})
+        if bk is None:
+            conn.execute(text("INSERT INTO odds.bankroll_picks (date, start_bank, staked) VALUES (:d, :b, :s)"),
+                         {"d": day, "b": bank, "s": staked})
+        else:  # grow the day's stake; a $0 day (settled on the spot) is re-opened
+            conn.execute(text("""
+                UPDATE odds.bankroll_picks SET staked = staked + :s, returned = NULL,
+                       end_bank = NULL, settled_at = NULL WHERE date = :d
+            """), {"d": day, "s": staked})
+    seed = int(day.strftime("%Y%m%d")) + 1000 * (len(rows) + 1)
+    result.update({"tickets": out, "staked": staked, "persisted": True,
+                   "summary": _dist_summary(_simulate(cands, stakes, n_sims, seed))})
+    logger.info("portfolio picks %s TOP-UP: +%d picks, +$%.0f (%d previos)",
+                day, len(out), staked, len(rows))
     return result
 
 
@@ -402,7 +465,6 @@ def _clear_day(conn, day: date) -> None:
     ), {"d": day}).scalar()
     if settled:
         raise RuntimeError(f"{day}: picks tickets already settled — refusing to rebuild")
-    from sandy.portfolio import started_games
     rows = conn.execute(text(
         "SELECT legs FROM odds.portfolio_picks_log WHERE date = :d"), {"d": day}).fetchall()
     started = started_games(conn, day)
@@ -554,28 +616,23 @@ def tickets_frame(cfg: Config | None = None):
 # ---------------------------------------------------------------------- cli --
 def _print_sheet(rep: dict) -> None:
     print(f"\n🎯 PORTAFOLIO PICKS {rep['date']} — banca ${rep.get('bank', 0):,.0f} · "
-          f"presupuesto ${rep.get('budget', 0):,.0f} · riesgo {rep.get('risk')}")
+          f"presupuesto ${rep.get('budget', 0):,.0f} · unidad plana ${rep.get('unidad', 0):,.0f}")
     if rep.get("skipped"):
         print(f"  (omitido: {rep['skipped']})")
         return
     if not rep["tickets"]:
         print(f"  🙅 $0 apostado ({rep.get('motivo')})")
         return
-    if rep.get("forzado"):
-        print("  ⚠️ DESPLIEGUE FORZADO: ningún candidato tiene EV positivo bajo nuestras "
-              f"probabilidades — se apuesta el {MIN_DEPLOY_FRACTION:.0%} del presupuesto "
-              "en la mejor combinación (regla siempre-apostar del experimento).")
     for t in rep["tickets"]:
-        kind = "Individual" if t["n_legs"] == 1 else f"Combinada x{t['n_legs']}"
         legs_txt = " + ".join(
             f"{l['liga_titulo']} {l['partido']}{' · ' + l['hora'] if l.get('hora') else ''}: {l['pick']} @{l['cuota']}"
+            f" (🤖 {l.get('meta', 0):.2f}, mercado {l.get('mercado_pct', 0):.0%}, {l.get('n_books', '?')} libros)"
             for l in t["legs"])
-        print(f"  Apuesta {t['ticket_id']}: {kind} — ${t['stake']:,.0f} en {legs_txt}")
-        print(f"      cuota total {t['cuota']:.2f} · prob modelo {t['prob']:.1%} "
-              f"· EV modelo ${t['ev']:+,.0f}")
+        print(f"  Apuesta {t['ticket_id']}: Individual — ${t['stake']:,.0f} en {legs_txt}")
+        print(f"      cuota {t['cuota']:.2f} · prob modelo {t['prob']:.1%} · EV modelo ${t['ev']:+,.0f}")
     s = rep["summary"] or {}
     print(f"  Σ apostado ${rep['staked']:,.0f}")
-    print(f"  SEGÚN NUESTROS MODELOS (prob cruda, sin recorte): esperado "
+    print(f"  SEGÚN NUESTROS MODELOS (prob calibrada): esperado "
           f"${s.get('expected_profit', 0):+,.0f} · P(día verde) {s.get('p_green', 0):.1%} · "
           f"peor 5% ${s.get('p5', 0):+,.0f}")
 
@@ -584,14 +641,17 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
     ap = argparse.ArgumentParser(
-        description="Sandy 🎯 Portafolio B — paper portfolio over the day's ✅ picks")
+        description="Sandy 🎯 Portafolio B — flat-stake paper portfolio over the day's ✅ picks")
     ap.add_argument("cmd", choices=["build", "settle", "report"],
-                    help="build = optimize+persist today; settle = grade open tickets "
+                    help="build = select+persist today; settle = grade open tickets "
                          "+ close bankroll days; report = ledger summary")
     ap.add_argument("--date", help="YYYY-MM-DD (default: today America/Los_Angeles)")
-    ap.add_argument("--budget", type=float, help="override the 30%%-of-bank default")
-    ap.add_argument("--risk", default=DEFAULT_RISK, choices=list(RISKS))
+    ap.add_argument("--budget", type=float, help=f"override the {BUDGET_FRACTION:.0%}-of-bank default")
+    ap.add_argument("--risk", default=DEFAULT_RISK, choices=list(RISKS),
+                    help="accepted for interface parity with A; B stakes flat")
     ap.add_argument("--force", action="store_true", help="rebuild an already-built day")
+    ap.add_argument("--topup", action="store_true",
+                    help="if the day is already built, add flat singles for picks logged since")
     ap.add_argument("--sims", type=int, default=N_SIMS)
     ap.add_argument("--dry", action="store_true", help="build without persisting")
     args = ap.parse_args()
@@ -599,7 +659,12 @@ def main() -> None:
     ts = lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")  # noqa: E731
     if args.cmd == "build":
         rep = build_portfolio(day=day, budget=args.budget, risk=args.risk,
-                              persist=not args.dry, force=args.force, n_sims=args.sims)
+                              persist=not args.dry, force=args.force, n_sims=args.sims,
+                              topup=args.topup)
+        if rep.get("topup"):
+            print(f"\n🎯 TOP-UP {rep['date']}: +{len(rep['tickets'])} picks, +${rep['staked']:,.0f} "
+                  f"({rep.get('tickets_previos', 0)} previos)"
+                  + (f" — {rep['motivo']}" if rep.get('motivo') else ""))
         _print_sheet(rep)
         print(json.dumps({k: v for k, v in rep.items() if k != "tickets"},
                          default=str, indent=2))

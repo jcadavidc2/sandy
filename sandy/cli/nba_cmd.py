@@ -49,6 +49,17 @@ def calibrate_cmd() -> None:
 def predict_cmd(notify) -> None:
     from sandy.nba.loop import predict_scheduled
     click.echo(f"nba predict: {predict_scheduled(load_config())}")
+
+    # Calibrated probability columns for the rows just written (walk-forward
+    # isotonic per line — sandy/calibrate_lines.py). Non-fatal.
+    try:
+        from sandy.calibrate_lines import fill_league
+        from sandy.db import create_engine as _ce
+        _eng = _ce(load_config())
+        for _lg in ("nba",):
+            fill_league(_eng, _lg)
+    except Exception as _exc:  # noqa: BLE001
+        click.echo(f"calibrate_lines skipped: {_exc}")
     if notify:
         from sandy.nba.loop import notify_daily
         click.echo(f"telegram sent: {notify_daily(load_config())}")

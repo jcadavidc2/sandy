@@ -238,14 +238,19 @@ SPECS = {
     # Dashboard-only — the daily MLB digest keeps its own meta_over_5_5 model.
     "mlb": {
         "schema": "derived", "table": "derived.mlb_predictions_meta",
+        # 2026-09-28: markets read the CALIBRATED probabilities (empirical CDF of
+        # the model's own past errors — sandy/over_under/calibration.py). The raw
+        # Normal columns p_over_* were over-confident by +6..+9pp on 6.5–8.5 and
+        # produced 61% of the losing value picks; rows without p_cal (too little
+        # history) simply drop out of the meta frame / candidate scans.
         "markets": {
-            "over_5_5": ("p_over_5_5", "runs", 5.5),
-            "over_6_5": ("p_over_6_5", "runs", 6.5),
-            "over_7_5": ("p_over_7_5", "runs", 7.5),
-            "over_8_5": ("p_over_8_5", "runs", 8.5),
-            "over_9_5": ("p_over_9_5", "runs", 9.5),
-            "over_10_5": ("p_over_10_5", "runs", 10.5),
-            "over_11_5": ("p_over_11_5", "runs", 11.5),
+            "over_5_5": ("p_cal_over_5_5", "runs", 5.5),
+            "over_6_5": ("p_cal_over_6_5", "runs", 6.5),
+            "over_7_5": ("p_cal_over_7_5", "runs", 7.5),
+            "over_8_5": ("p_cal_over_8_5", "runs", 8.5),
+            "over_9_5": ("p_cal_over_9_5", "runs", 9.5),
+            "over_10_5": ("p_cal_over_10_5", "runs", 10.5),
+            "over_11_5": ("p_cal_over_11_5", "runs", 11.5),
         },
         "num_cols": ["home_starter_era", "away_starter_era", "home_trailing15_rpg",
                      "away_trailing15_rpg", "home_expected_runs", "away_expected_runs",
@@ -257,6 +262,28 @@ SPECS = {
         "wx_key": "game_pk",  # odds.game_weather join (weather covariates)
     },
 }
+
+
+# --------------------------------------------------------------------------
+# Calibrated probability columns (2026-09-29, the MLB lesson generalized — see
+# sandy/calibrate_lines.py): for these leagues every market reads the walk-forward
+# isotonic-calibrated column p_cal_<...> instead of the raw model column p_<...>.
+# The raw columns stay on the tables; a league without enough own history gets an
+# identity map (calibrated == raw) until it earns one, so nothing goes dark. MLB has
+# its own layer (over_under/calibration.py, wired above); worldcup's table is a view.
+CALIBRATED_LEAGUES = ("nhl", "mls", "nba", "nfl",
+                      "soccer_col", "soccer_mex", "soccer_esp", "soccer_eng",
+                      "soccer_ucl", "soccer_uel", "soccer_lib", "soccer_sud",
+                      "soccer_ccc", "soccer_lgc")
+CALIBRATED_ENABLED = True   # flip to False to fall back to raw columns everywhere at once
+
+if CALIBRATED_ENABLED:
+    for _lg in CALIBRATED_LEAGUES:
+        SPECS[_lg]["markets"] = {
+            m: ("p_cal_" + pcol[2:] if pcol.startswith("p_") and not pcol.startswith("p_cal_") else pcol,
+                kind, line)
+            for m, (pcol, kind, line) in SPECS[_lg]["markets"].items()}
+    del _lg
 
 
 def _correct(row, kind: str, line: float | None, p: float) -> bool | None:
@@ -814,8 +841,8 @@ def train_meta(league: str, config: Config | None = None) -> dict:
     # League-scoped schemas (soccer) have a NOT NULL league column on snapshots.
     lg_col, lg_val = ("league, ", ":lg, ") if SPECS[league].get("league") else ("", "")
     if SPECS[league].get("no_snapshot"):
-        logger.info("%s meta trained: auc=%s thr=%s params=%s (no snapshot table)",
-                    league, auc, rec, chosen)
+        logger.info("%s meta trained: auc=%s thr=%s by_market=%s params=%s (no snapshot table)",
+                    league, auc, rec, threshold_by_market, chosen)
         return {"rows": len(X), "threshold": rec, "eval_table": table, "auc": auc,
                 "calib_auc": round(calib_auc, 4), "params": chosen,
                 "threshold_by_market": threshold_by_market,
@@ -829,7 +856,8 @@ def train_meta(league: str, config: Config | None = None) -> dict:
         """), {"d": date.today(), "n": len(hold), "lg": SPECS[league].get("league"),
                "acc": next((t["acc"] for t in table if t["thr"] == rec), None) if rec else None,
                "rel": json.dumps(table), "thr": rec})
-    logger.info("%s meta trained: auc=%s thr=%s params=%s", league, auc, rec, chosen)
+    logger.info("%s meta trained: auc=%s thr=%s by_market=%s params=%s",
+                league, auc, rec, threshold_by_market, chosen)
     return {"rows": len(X), "threshold": rec, "eval_table": table, "auc": auc,
             "calib_auc": round(calib_auc, 4), "params": chosen,
             "threshold_by_market": threshold_by_market,
@@ -939,13 +967,21 @@ def load_meta(league: str, cfg: Config):
     return _loaded[league]
 
 
+# 2026-09-28 audit: the per-line rule (max Wilson-LB rung over a ladder that starts at
+# 0.50) collapsed to 0.50-0.60 for MLB coin-flip lines — 'over 8.5' was approved at meta
+# 0.508 and those legs hit 46%. Legs with meta ≥ 0.65 hit 74.5% live. Never approve below this.
+META_THRESHOLD_FLOOR = 0.65
+
+
 def market_threshold(league: str, cfg: Config, market: str) -> float | None:
-    """The per-line recommended threshold (falls back to the league's global)."""
+    """The per-line recommended threshold (falls back to the league's global),
+    never below META_THRESHOLD_FLOOR."""
     loaded = load_meta(league, cfg)
     if not loaded:
         return None
     _b, _f, global_thr, _i, by_market = loaded
-    return by_market.get(market, global_thr)
+    thr = by_market.get(market, global_thr)
+    return None if thr is None else max(float(thr), META_THRESHOLD_FLOOR)
 
 
 def score_candidate(league: str, cfg: Config, row_dict: dict, market: str, p: float) -> float | None:

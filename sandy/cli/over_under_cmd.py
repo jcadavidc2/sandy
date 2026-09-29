@@ -96,6 +96,27 @@ def predict_cmd(ctx: click.Context, date_str: str | None, notify: bool) -> None:
         click.echo("Telegram notification sent.")
 
 
+@over_under.command("calibrate-probs")
+@click.option("--force", is_flag=True, help="Recompute p_cal for ALL rows, not only NULLs.")
+@click.option("--since", "since_str", type=str, default="2026-05-01",
+              help="Start date for the raw-vs-calibrated live report (YYYY-MM-DD).")
+@click.pass_context
+def calibrate_probs_cmd(ctx: click.Context, force: bool, since_str: str) -> None:
+    """Walk-forward back-fill of the calibrated p_cal_over_* columns + honest
+    per-line bias/Brier report (raw Normal vs empirical-CDF) on live rows."""
+    from sandy.cli.main import _require_config
+    from sandy.db import create_engine
+    from sandy.over_under.calibration import backfill_calibrated, calibration_report
+
+    config = _require_config(ctx)
+    engine = create_engine(config)
+    n = backfill_calibrated(engine, force=force)
+    click.echo(f"calibrate-probs: {n} rows back-filled (force={force})")
+    for r in calibration_report(engine, _parse_date(since_str)):
+        click.echo(f"  O{r['line']}: n={r['n']}  bias raw {r['bias_raw_pp']:+}pp → cal {r['bias_cal_pp']:+}pp  "
+                   f"Brier raw {r['brier_raw']} → cal {r['brier_cal']}")
+
+
 @over_under.command("reconcile")
 @click.option("--date", "date_str", type=str, default=None, help="Game date (YYYY-MM-DD). Defaults to today.")
 @click.option("--notify", is_flag=True, help="Send Telegram notification with results.")
