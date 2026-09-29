@@ -308,6 +308,12 @@ def board_range(league: str, start: date, end: date) -> pd.DataFrame:
             p = float(p)
             conf = p if p >= 0.5 else 1 - p
             thr = thr_by.get(market, global_thr)
+            # Same gate the value log and both portfolios use (betmeta.market_threshold):
+            # never approve below META_THRESHOLD_FLOOR, or the board shows ✅ on picks
+            # the system refuses to bet (audit 2026-09-28: per-line rungs had sunk to .50).
+            if thr is not None:
+                from sandy.betmeta import META_THRESHOLD_FLOOR
+                thr = max(float(thr), META_THRESHOLD_FLOOR)
             acc_thr, _n = _acc_at(art, market, thr)
             mp = score_candidate(league, cfg, rd, market, p)
             ok = mp is not None and thr is not None and mp >= thr
