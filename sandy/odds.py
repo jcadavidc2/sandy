@@ -320,8 +320,12 @@ def _event_rows(league: str, sport_key: str, event: dict) -> list[dict]:
                     if price > 1.0:
                         implied[oc["name"]] = 1.0 / price
                 total = sum(implied.values())
-                # a full outcome set: 2 for totals/US h2h, 3 for soccer h2h
-                expected = 3 if (market == "h2h" and sport_key.startswith("soccer")) else 2
+                # A full outcome set: 2 for totals and 2-way h2h; 3 when THIS book lists a
+                # Draw — soccer, and the European regulation-time hockey market (2026-09-29:
+                # 13 of the 22 NHL books in the eu region quote 3-way as their h2h, the
+                # other 9 quote 2-way incl. OT). Decided per book, never per sport.
+                has_draw = market == "h2h" and any(oc.get("name") not in (home, away) for oc in ocs)
+                expected = 3 if has_draw else 2
                 complete = len(implied) >= expected and total > 0
                 for oc in ocs:
                     price = float(oc.get("price") or 0)
@@ -344,11 +348,12 @@ def _event_rows(league: str, sport_key: str, event: dict) -> list[dict]:
                         "price": price, "implied": implied[name],
                         "implied_novig": (implied[name] / total) if complete else None,
                     })
-                # DERIVED double chance from the complete 3-way soccer h2h:
+                # DERIVED double chance from a complete 3-way h2h (soccer, NHL regulation):
                 # cuota_1X = 1/(1/cuota_H + 1/cuota_X)  (combination formula);
                 # nv(1X) = (iH+iX)/total == nv(H)+nv(X); the '2' side reuses the
-                # h2h away price. No extra API credits — pure derivation.
-                if market == "h2h" and expected == 3 and complete:
+                # h2h away price. No extra API credits — pure derivation. Books that
+                # quote 2-way derive NOTHING (their "home" is not a regulation win).
+                if has_draw and complete:
                     i_by_side = {}
                     for oc in ocs:
                         nm = oc["name"]
@@ -501,7 +506,9 @@ def _rederive_double_chance(conn, league: str, event_id: str) -> None:
         ), calc AS (
             SELECT *, (total - ih - ia) AS ix FROM h2h
             WHERE ih IS NOT NULL AND ia IS NOT NULL AND total IS NOT NULL
-              AND (total - ih - ia) > 0
+              -- a real Draw implied (regulation ties are ~22%); a 2-way book leaves
+              -- ix = 0 up to float noise and must NEVER become a fake 1X price
+              AND (total - ih - ia) > 0.02
         )
         INSERT INTO odds.market_odds
             (fetched_at, sport_key, league, event_id, event_home, event_away,
@@ -602,11 +609,12 @@ def market_to_api(league: str, market: str) -> tuple[str, float | None] | None:
         return "totals", round(float(line), 2)
     if kind == "winner":
         return "h2h", None
-    if kind == "result" and _is_soccer(league):
-        # derived from the 3-way h2h (NHL's home-or-tie is regulation-time and
-        # has NO 3-way feed here → stays odds-less)
+    if kind == "result" and (_is_soccer(league) or league == "nhl"):
+        # derived per book from a 3-way h2h: soccer, and NHL regulation-time (the eu
+        # region's hockey h2h is 3-way at 13 of 22 books — exactly the market the NHL
+        # Dixon-Coles model predicts; 2-way books contribute no 1X row)
         return "double_chance", None
-    return None  # NHL result / btts / corners: no odds feed
+    return None  # btts / corners: no odds feed
 
 
 def pick_side(kind: str, p: float) -> str:
